@@ -29,4 +29,5 @@ export type {
   ConfigFieldSchema,
   AdapterConfigSchema,
   ServerAdapterModule,
+  AdapterMemoryFunctions,
 } from "@paperclipai/adapter-utils";

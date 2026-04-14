@@ -38,6 +38,9 @@ export type {
   ScratchpadReadResult,
   IssueUpdate,
   SearchMemoriesOptions,
+  MemorySyncResult,
+  MemoryEntry,
+  MemorySearchOptions,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -110,6 +113,226 @@ export async function syncRalphSkills(
     }
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Ralph Memory Bank → Paperclip Knowledge Base 同步 (T1.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ralph memories.md 文件路径
+ * Ralph 将记忆存储在 .ralph/agent/memories.md
+ */
+function getRalphMemoriesPath(workingDir: string): string {
+  return join(workingDir, ".ralph", "agent", "memories.md");
+}
+
+/**
+ * 解析 Ralph memories.md 文件
+ * 格式:
+ * ## Patterns
+ * ### mem-xxx
+ * > content
+ * <!-- tags: tag1, tag2 | created: YYYY-MM-DD -->
+ */
+function parseRalphMemoriesFile(
+  content: string,
+): Array<{ id: string; type: "pattern" | "decision" | "fix" | "context"; content: string; tags: string[]; createdAt: string }> {
+  const memories: Array<{
+    id: string;
+    type: "pattern" | "decision" | "fix" | "context";
+    content: string;
+    tags: string[];
+    createdAt: string;
+  }> = [];
+
+  // 定义各记忆类型的标题
+  const sectionMap: Record<string, "pattern" | "decision" | "fix" | "context"> = {
+    Patterns: "pattern",
+    Decisions: "decision",
+    Fixes: "fix",
+    Context: "context",
+  };
+
+  // 按 ## 标题分割内容
+  const sections = content.split(/(?=^##\s+)/m);
+
+  for (const section of sections) {
+    const sectionMatch = section.match(/^##\s+(\w+)\s*\n/);
+    if (!sectionMatch) continue;
+
+    const sectionTitle = sectionMatch[1] as keyof typeof sectionMap;
+    const sectionType = sectionMap[sectionTitle];
+    if (!sectionType) continue;
+
+    // 提取该 section 下的所有记忆块
+    // 格式: ### mem-id\n> content\n<!-- tags: ... | created: ... -->
+    const memoryBlocks = section.slice(section.indexOf("\n", section.indexOf(sectionMatch[0])));
+
+    // 匹配所有记忆块: ### mem-xxx\n> content\n<!-- tags: ... -->
+    const blockRegex = /###\s+(mem-\d+-\w+)\s*\n>\s*([\s\S]*?)\n<!--\s*tags:\s*([^|]*?)\s*\|\s*created:\s*([^>]+?)\s*-->/gm;
+    let match;
+
+    while ((match = blockRegex.exec(memoryBlocks)) !== null) {
+      const id = match[1].trim();
+      const rawContent = match[2].trim();
+      const tagsStr = match[3].trim();
+      const createdAt = match[4].trim();
+
+      // 清理内容: 移除引用标记 >
+      const content = rawContent.replace(/^>\s*/gm, "").trim();
+
+      // 解析标签
+      const tags = tagsStr
+        ? tagsStr.split(",").map((t) => t.trim()).filter(Boolean)
+        : [];
+
+      memories.push({ id, type: sectionType, content, tags, createdAt });
+    }
+  }
+
+  return memories;
+}
+
+/**
+ * 读取 Ralph 记忆银行
+ *
+ * 从 .ralph/agent/memories.md 读取所有记忆条目，
+ * 解析后返回结构化的 MemorySyncResult。
+ *
+ * @param workingDir Ralph 工作目录
+ * @returns 记忆同步结果，包含所有记忆条目
+ */
+export async function readRalphMemories(
+  workingDir: string,
+): Promise<{
+  memoriesPath: string;
+  modifiedAt: string | null;
+  entries: Array<{
+    id: string;
+    type: "pattern" | "decision" | "fix" | "context";
+    content: string;
+    tags: string[];
+    createdAt: string;
+  }>;
+} | null> {
+  const { readFile, stat } = await import("node:fs/promises");
+
+  const memoriesPath = getRalphMemoriesPath(workingDir);
+
+  try {
+    const content = await readFile(memoriesPath, "utf-8");
+    const stats = await stat(memoriesPath);
+
+    const entries = parseRalphMemoriesFile(content);
+
+    return {
+      memoriesPath,
+      modifiedAt: stats.mtime.toISOString(),
+      entries,
+    };
+  } catch {
+    // memories.md 不存在 - Ralph 还未创建任何记忆
+    return null;
+  }
+}
+
+/**
+ * 搜索 Ralph 记忆
+ *
+ * 在 Ralph Memory Bank 中搜索符合条件的记忆条目。
+ * 支持类型过滤、标签过滤和关键词搜索。
+ *
+ * @param workingDir Ralph 工作目录
+ * @param options 搜索选项
+ * @returns 符合条件的记忆条目
+ */
+export async function searchRalphMemories(
+  workingDir: string,
+  options: {
+    type?: "pattern" | "decision" | "fix" | "context";
+    tags?: string[];
+    query?: string;
+    limit?: number;
+  } = {},
+): Promise<
+  Array<{
+    id: string;
+    type: "pattern" | "decision" | "fix" | "context";
+    content: string;
+    tags: string[];
+    createdAt: string;
+  }>
+> {
+  const memoriesData = await readRalphMemories(workingDir);
+
+  if (!memoriesData) return [];
+
+  let results = memoriesData.entries;
+
+  // 类型过滤
+  if (options.type) {
+    results = results.filter((m) => m.type === options.type);
+  }
+
+  // 标签过滤
+  if (options.tags && options.tags.length > 0) {
+    const tagSet = new Set(options.tags.map((t) => t.toLowerCase()));
+    results = results.filter((m) =>
+      m.tags.some((t) => tagSet.has(t.toLowerCase()))
+    );
+  }
+
+  // 关键词搜索
+  if (options.query) {
+    const queryLower = options.query.toLowerCase();
+    results = results.filter(
+      (m) =>
+        m.content.toLowerCase().includes(queryLower) ||
+        m.id.toLowerCase().includes(queryLower) ||
+        m.tags.some((t) => t.toLowerCase().includes(queryLower)),
+    );
+  }
+
+  // 数量限制
+  if (typeof options.limit === "number" && options.limit > 0) {
+    results = results.slice(0, options.limit);
+  }
+
+  return results;
+}
+
+/**
+ * 获取 Ralph 记忆统计摘要
+ *
+ * 返回各类型记忆的数量统计。
+ *
+ * @param workingDir Ralph 工作目录
+ * @returns 记忆统计
+ */
+export async function getRalphMemoryStats(
+  workingDir: string,
+): Promise<{
+  patterns: number;
+  decisions: number;
+  fixes: number;
+  context: number;
+  total: number;
+} | null> {
+  const memoriesData = await readRalphMemories(workingDir);
+
+  if (!memoriesData) return null;
+
+  const counts = { patterns: 0, decisions: 0, fixes: 0, context: 0 };
+
+  for (const entry of memoriesData.entries) {
+    if (entry.type === "pattern") counts.patterns++;
+    else if (entry.type === "decision") counts.decisions++;
+    else if (entry.type === "fix") counts.fixes++;
+    else if (entry.type === "context") counts.context++;
+  }
+
+  return { ...counts, total: memoriesData.entries.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +431,9 @@ export class RalphAdapterServer implements ServerAdapterModule {
       // Read Ralph scratchpad after execution
       const scratchpadData = await this.readRalphScratchpad(workingDir);
 
+      // T1.5: Read Ralph memories for Paperclip Knowledge Base sync
+      const memoriesData = await readRalphMemories(workingDir);
+
       // Calculate usage (simplified - real implementation would parse Ralph output)
       const usage: UsageSummary = {
         inputTokens: this.estimateTokens(stdout),
@@ -240,6 +466,11 @@ export class RalphAdapterServer implements ServerAdapterModule {
           scratchpad: scratchpadData?.content || null,
           scratchpadPath: scratchpadData?.path || null,
           scratchpadModifiedAt: scratchpadData?.modifiedAt || null,
+          // T1.5: Ralph Memory Bank → Paperclip Knowledge Base sync data
+          memories: memoriesData?.entries || [],
+          memoriesPath: memoriesData?.memoriesPath || null,
+          memoriesModifiedAt: memoriesData?.modifiedAt || null,
+          memoriesCount: memoriesData?.entries.length ?? 0,
         },
       };
     } catch (error) {

@@ -328,6 +328,72 @@ export interface ServerAdapterModule {
    * resolved inside this method — the caller receives a fully hydrated schema.
    */
   getConfigSchema?: () => Promise<AdapterConfigSchema> | AdapterConfigSchema;
+  /**
+   * T1.5: Ralph Memory Bank ↔ Paperclip Knowledge Base 同步
+   * Optional: memory functions for adapters that manage an internal memory bank.
+   * Enables bidirectional sync between adapter memory systems and Paperclip's
+   * company knowledge base.
+   */
+  memoryFunctions?: AdapterMemoryFunctions;
+}
+
+/**
+ * Adapter memory functions interface
+ * Implemented by adapters with internal memory banks (e.g. Ralph)
+ */
+export interface AdapterMemoryFunctions {
+  /**
+   * Read all memories from the adapter's memory bank.
+   * @param workingDir - Adapter working directory
+   */
+  readMemories(
+    workingDir: string,
+  ): Promise<{
+    memoriesPath: string;
+    modifiedAt: string | null;
+    entries: Array<{
+      id: string;
+      type: "pattern" | "decision" | "fix" | "context";
+      content: string;
+      tags: string[];
+      createdAt: string;
+    }>;
+  } | null>;
+  /**
+   * Search memories in the adapter's memory bank.
+   * @param workingDir - Adapter working directory
+   * @param options - Search options (type, tags, query, limit)
+   */
+  searchMemories(
+    workingDir: string,
+    options?: {
+      type?: "pattern" | "decision" | "fix" | "context";
+      tags?: string[];
+      query?: string;
+      limit?: number;
+    },
+  ): Promise<
+    Array<{
+      id: string;
+      type: "pattern" | "decision" | "fix" | "context";
+      content: string;
+      tags: string[];
+      createdAt: string;
+    }>
+  >;
+  /**
+   * Get memory statistics.
+   * @param workingDir - Adapter working directory
+   */
+  getMemoryStats(
+    workingDir: string,
+  ): Promise<{
+    patterns: number;
+    decisions: number;
+    fixes: number;
+    context: number;
+    total: number;
+  } | null>;
 }
 
 // ---------------------------------------------------------------------------

@@ -91,6 +91,9 @@ import {
   syncRalphSkills,
   testEnvironment as ralphTestEnvironment,
   sessionCodec as ralphSessionCodec,
+  readRalphMemories,
+  searchRalphMemories,
+  getRalphMemoryStats,
 } from "@paperclipai/adapter-ralph-local/server";
 import {
   agentConfigurationDoc as ralphAgentConfigurationDoc,
@@ -226,6 +229,12 @@ const ralphLocalAdapter: ServerAdapterModule = {
   models: ralphModels,
   supportsLocalAgentJwt: true,
   agentConfigurationDoc: ralphAgentConfigurationDoc,
+  // T1.5: Ralph Memory Bank ↔ Paperclip Knowledge Base 同步
+  memoryFunctions: {
+    readMemories: readRalphMemories,
+    searchMemories: searchRalphMemories,
+    getMemoryStats: getRalphMemoryStats,
+  },
 };
 
 function registerBuiltInAdapters() {

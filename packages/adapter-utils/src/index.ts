@@ -26,6 +26,7 @@ export type {
   ConfigFieldSchema,
   AdapterConfigSchema,
   ServerAdapterModule,
+  AdapterMemoryFunctions,
   QuotaWindow,
   ProviderQuotaResult,
   TranscriptEntry,

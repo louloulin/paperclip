@@ -346,6 +346,53 @@ export interface ScratchpadReadResult {
   modifiedAt: string;
 }
 
+/**
+ * Ralph 记忆同步结果
+ * 包含 Ralph Memory Bank 中所有记忆的同步数据
+ */
+export interface MemorySyncResult {
+  /** 所有记忆条目 */
+  memories: MemoryEntry[];
+  /** 总数 */
+  total: number;
+  /** 记忆文件路径 */
+  memoriesPath: string;
+  /** 最后修改时间 */
+  modifiedAt: string;
+  /** 同步时间戳 */
+  syncedAt: string;
+}
+
+/**
+ * 单个记忆条目
+ */
+export interface MemoryEntry {
+  /** 记忆 ID */
+  id: string;
+  /** 记忆类型 */
+  type: "pattern" | "decision" | "fix" | "context";
+  /** 记忆内容 */
+  content: string;
+  /** 关联标签 */
+  tags: string[];
+  /** 创建时间 */
+  createdAt: string;
+}
+
+/**
+ * 记忆搜索选项
+ */
+export interface MemorySearchOptions {
+  /** 记忆类型过滤 */
+  type?: MemoryEntry["type"];
+  /** 标签过滤 */
+  tags?: string[];
+  /** 关键词搜索 */
+  query?: string;
+  /** 数量限制 */
+  limit?: number;
+}
+
 // ============================================================
 // 适配器配置
 // ============================================================
