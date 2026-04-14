@@ -164,6 +164,7 @@ export type {
 export type { LiveEvent } from "./live.js";
 export type { DashboardSummary } from "./dashboard.js";
 export type { ActivityEvent } from "./activity.js";
+export type { Wave, WaveEvent, WaveWithEvents } from "./waves.js";
 export type { SidebarBadges } from "./sidebar-badges.js";
 export type { InboxDismissal } from "./inbox-dismissal.js";
 export type {

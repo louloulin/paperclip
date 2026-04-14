@@ -51,6 +51,14 @@ export type {
   BudgetHardStop,
 } from "./budget.js";
 
+// Re-export wave service for T2.5
+export { RalphWaveService } from "./wave.js";
+export type {
+  WaveDispatchRequest,
+  WaveEventResult,
+  WaveResult,
+} from "./wave.js";
+
 // ---------------------------------------------------------------------------
 // Ralph Skill Loader — T1.6: 统一 Skill 加载框架
 // ---------------------------------------------------------------------------

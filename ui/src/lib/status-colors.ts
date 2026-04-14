@@ -47,6 +47,9 @@ export const statusBadge: Record<string, string> = {
   idle: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300",
   archived: "bg-muted text-muted-foreground",
 
+  // Wave statuses (T2.5)
+  dispatching: "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300",
+
   // Goal statuses
   planned: "bg-muted text-muted-foreground",
   achieved: "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
