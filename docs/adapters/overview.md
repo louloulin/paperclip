@@ -26,6 +26,7 @@ When a heartbeat fires, Paperclip:
 | Pi Local | `pi_local` | Runs an embedded Pi agent locally |
 | Hermes Local | `hermes_local` | Runs Hermes CLI locally (`hermes-paperclip-adapter`) |
 | OpenClaw Gateway | `openclaw_gateway` | Connects to an OpenClaw gateway endpoint |
+| [Ralph Local](/adapters/ralph-local) | `ralph_local` | Runs Ralph Loop Orchestrator with multi-hat parallel execution, memory bank, and task management |
 | [Process](/adapters/process) | `process` | Executes arbitrary shell commands |
 | [HTTP](/adapters/http) | `http` | Sends webhooks to external agents |
 
@@ -79,6 +80,7 @@ my-adapter/
 ## Choosing an Adapter
 
 - **Need a coding agent?** Use `claude_local`, `codex_local`, `opencode_local`, `hermes_local`, or install `droid_local` as an external plugin
+- **Need multi-hat parallel execution with memory bank?** Use `ralph_local` — Ralph Loop Orchestrator brings task management, pattern/decision/fix memories, and wave-based parallelism
 - **Need to run a script or command?** Use `process`
 - **Need to call an external service?** Use `http`
 - **Need something custom?** [Create your own adapter](/adapters/creating-an-adapter) or [build an external adapter plugin](/adapters/external-adapters)
