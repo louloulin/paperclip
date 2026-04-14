@@ -24,6 +24,7 @@ import { ApprovalDetail } from "./pages/ApprovalDetail";
 import { Costs } from "./pages/Costs";
 import { Activity } from "./pages/Activity";
 import { ComplianceReports } from "./pages/ComplianceReports";
+import { SsoSettings } from "./pages/SsoSettings";
 import { Waves } from "./pages/Waves";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
@@ -175,6 +176,7 @@ function boardRoutes() {
       <Route path="activity" element={<Activity />} />
       <Route path="waves" element={<Waves />} />
       <Route path="compliance" element={<ComplianceReports />} />
+      <Route path="sso" element={<SsoSettings />} />
       <Route path="inbox" element={<InboxRootRedirect />} />
       <Route path="inbox/mine" element={<Inbox />} />
       <Route path="inbox/recent" element={<Inbox />} />

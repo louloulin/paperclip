@@ -63,3 +63,4 @@ export { pluginJobs, pluginJobRuns } from "./plugin_jobs.js";
 export { pluginWebhookDeliveries } from "./plugin_webhooks.js";
 export { pluginLogs } from "./plugin_logs.js";
 export { waves, waveEvents } from "./waves.js";
+export { ssoConfigs, ssoSessions, ssoAuditLog } from "./sso.js";

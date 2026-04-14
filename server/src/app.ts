@@ -30,6 +30,7 @@ import { inboxDismissalRoutes } from "./routes/inbox-dismissals.js";
 import { waveRoutes } from "./routes/waves.js";
 import { instanceSettingsRoutes } from "./routes/instance-settings.js";
 import { complianceReportRoutes } from "./routes/compliance-reports.js";
+import { ssoRoutes } from "./routes/sso.js";
 import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
@@ -177,6 +178,7 @@ export async function createApp(
   api.use(waveRoutes(db));
   api.use(instanceSettingsRoutes(db));
   api.use(complianceReportRoutes(db));
+  api.use(ssoRoutes(db));
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);

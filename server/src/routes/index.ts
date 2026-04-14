@@ -19,3 +19,4 @@ export { llmRoutes } from "./llms.js";
 export { accessRoutes } from "./access.js";
 export { instanceSettingsRoutes } from "./instance-settings.js";
 export { complianceReportRoutes } from "./compliance-reports.js";
+export { ssoRoutes } from "./sso.js";
