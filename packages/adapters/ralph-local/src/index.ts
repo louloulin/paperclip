@@ -1,8 +1,7 @@
 /**
- * Ralph Paperclip Adapter
+ * Ralph Paperclip Adapter Metadata
  *
- * Paperclip × Ralph 集成适配器
- * 将 Ralph Loop Runner 包装为 Paperclip 可调用的外部适配器服务
+ * Adapter type, models, and configuration documentation
  */
 
 export const type = "ralph_local";
@@ -108,30 +107,7 @@ Ralph Adapter 与 Paperclip 控制平面深度集成：
 
 ## 环境变量
 
-- \`PAPERCLIP_API_URL\`: Paperclip API 地址
-- \`PAPERCLIP_API_KEY\`: Paperclip API 密钥
+- \`PAPERCLIP_RUN_ID\`: 当前运行 ID
 - \`PAPERCLIP_AGENT_ID\`: 当前 Agent ID
 - \`PAPERCLIP_COMPANY_ID\`: 公司 ID
 `;
-
-// Re-export types for external use
-export type {
-  RalphPaperclipAdapter,
-  RalphAdapterConfig,
-  RalphAdapterFactory,
-  HeartbeatEvent,
-  RalphRunResult,
-  Memory,
-  HatCollection,
-  Hat,
-  HatTool,
-  MemoryBank,
-  IssueUpdate,
-  CostEvent,
-  ScratchpadState,
-  RalphToolResult,
-  RalphTools,
-  GrepResult,
-  RalphExecutionEvent,
-  RalphEventHandler,
-} from "./types.js";
