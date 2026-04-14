@@ -17,3 +17,5 @@ export { instanceSettingsApi } from "./instanceSettings";
 export { sidebarBadgesApi } from "./sidebarBadges";
 export { inboxDismissalsApi } from "./inboxDismissals";
 export { companySkillsApi } from "./companySkills";
+export { wavesApi } from "./waves";
+export { complianceApi } from "./compliance";

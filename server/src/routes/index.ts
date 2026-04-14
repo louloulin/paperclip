@@ -18,3 +18,4 @@ export { waveRoutes } from "./waves.js";
 export { llmRoutes } from "./llms.js";
 export { accessRoutes } from "./access.js";
 export { instanceSettingsRoutes } from "./instance-settings.js";
+export { complianceReportRoutes } from "./compliance-reports.js";
