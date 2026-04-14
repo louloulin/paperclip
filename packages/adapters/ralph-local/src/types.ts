@@ -333,6 +333,19 @@ export interface ScratchpadState {
   updatedAt: string;
 }
 
+/**
+ * Scratchpad 读取结果
+ * Ralph Adapter 执行后读取的 scratchpad 数据
+ */
+export interface ScratchpadReadResult {
+  /** Scratchpad 内容 */
+  content: string;
+  /** 文件路径 */
+  path: string;
+  /** 最后修改时间 */
+  modifiedAt: string;
+}
+
 // ============================================================
 // 适配器配置
 // ============================================================

@@ -35,6 +35,7 @@ export type {
   Hat,
   MemoryBank,
   ScratchpadState,
+  ScratchpadReadResult,
   IssueUpdate,
   SearchMemoriesOptions,
 } from "../types.js";
@@ -204,6 +205,9 @@ export class RalphAdapterServer implements ServerAdapterModule {
       stdout = result.stdout;
       stderr = result.stderr;
 
+      // Read Ralph scratchpad after execution
+      const scratchpadData = await this.readRalphScratchpad(workingDir);
+
       // Calculate usage (simplified - real implementation would parse Ralph output)
       const usage: UsageSummary = {
         inputTokens: this.estimateTokens(stdout),
@@ -221,6 +225,7 @@ export class RalphAdapterServer implements ServerAdapterModule {
           hatCollection,
           defaultHat,
           workingDir,
+          scratchpadPath: scratchpadData?.path || null,
         },
         sessionDisplayId: this.adapterId,
         provider: "ralph",
@@ -232,6 +237,9 @@ export class RalphAdapterServer implements ServerAdapterModule {
           stdout: stdout.slice(0, 10000), // Limit size
           stderr: stderr.slice(0, 1000),
           exitCode: result.exitCode,
+          scratchpad: scratchpadData?.content || null,
+          scratchpadPath: scratchpadData?.path || null,
+          scratchpadModifiedAt: scratchpadData?.modifiedAt || null,
         },
       };
     } catch (error) {
@@ -376,6 +384,40 @@ export class RalphAdapterServer implements ServerAdapterModule {
         });
       });
     });
+  }
+
+  /**
+   * Read Ralph scratchpad after execution
+   * Ralph stores scratchpad in .ralph/agent/scratchpad.md relative to working directory
+   */
+  private async readRalphScratchpad(
+    workingDir: string,
+  ): Promise<{ content: string; path: string; modifiedAt: string } | null> {
+    const { join } = await import("node:path");
+    const { readFile, stat } = await import("node:fs/promises");
+
+    const scratchpadPath = join(workingDir, ".ralph", "agent", "scratchpad.md");
+
+    try {
+      const content = await readFile(scratchpadPath, "utf-8");
+      const stats = await stat(scratchpadPath);
+
+      // Truncate scratchpad content to avoid bloating result
+      const maxLength = 50000; // 50KB max
+      const truncatedContent =
+        content.length > maxLength
+          ? content.slice(0, maxLength) + "\n\n[...scratchpad truncated...]"
+          : content;
+
+      return {
+        content: truncatedContent,
+        path: scratchpadPath,
+        modifiedAt: stats.mtime.toISOString(),
+      };
+    } catch {
+      // Scratchpad doesn't exist yet - this is normal for first run
+      return null;
+    }
   }
 
   /**
@@ -552,6 +594,7 @@ function readNonEmptyString(value: unknown): string | null {
  * - workingDir: Working directory
  * - maxLoops: Max loop iterations
  * - adapterId: Ralph adapter instance ID
+ * - scratchpadPath: Path to Ralph scratchpad file
  */
 export const sessionCodec: AdapterSessionCodec = {
   deserialize(raw: unknown) {
@@ -572,6 +615,7 @@ export const sessionCodec: AdapterSessionCodec = {
       readNonEmptyString(record.cwd);
     const maxLoops = record.maxLoops ?? record.max_loops;
     const timeoutSec = record.timeoutSec ?? record.timeout_sec;
+    const scratchpadPath = readNonEmptyString(record.scratchpadPath);
 
     return {
       adapterId,
@@ -580,6 +624,7 @@ export const sessionCodec: AdapterSessionCodec = {
       ...(workingDir ? { workingDir } : {}),
       ...(typeof maxLoops === "number" ? { maxLoops } : {}),
       ...(typeof timeoutSec === "number" ? { timeoutSec } : {}),
+      ...(scratchpadPath ? { scratchpadPath } : {}),
     };
   },
 
@@ -600,6 +645,7 @@ export const sessionCodec: AdapterSessionCodec = {
       readNonEmptyString(params.cwd);
     const maxLoops = params.maxLoops ?? params.max_loops;
     const timeoutSec = params.timeoutSec ?? params.timeout_sec;
+    const scratchpadPath = readNonEmptyString(params.scratchpadPath);
 
     return {
       adapterId,
@@ -608,6 +654,7 @@ export const sessionCodec: AdapterSessionCodec = {
       ...(workingDir ? { workingDir } : {}),
       ...(typeof maxLoops === "number" ? { maxLoops } : {}),
       ...(typeof timeoutSec === "number" ? { timeoutSec } : {}),
+      ...(scratchpadPath ? { scratchpadPath } : {}),
     };
   },
 
