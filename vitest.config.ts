@@ -6,6 +6,7 @@ export default defineConfig({
       "packages/db",
       "packages/adapters/codex-local",
       "packages/adapters/opencode-local",
+      "packages/adapters/ralph-local",
       "server",
       "ui",
       "cli",

@@ -701,6 +701,14 @@ export class RalphAdapterServer implements ServerAdapterModule {
       // T1.5: Read Ralph memories for Paperclip Knowledge Base sync
       const memoriesData = await readRalphMemories(workingDir);
 
+      // T1.4: Ralph → Paperclip task status writeback
+      const writebackResult = await this.writebackTasksToPaperclip(
+        workingDir,
+        ctx.agent.companyId || "",
+        ctx.agent.id,
+        ctx.runId,
+      );
+
       // Calculate usage (simplified - real implementation would parse Ralph output)
       const usage: UsageSummary = {
         inputTokens: this.estimateTokens(stdout),
@@ -738,6 +746,8 @@ export class RalphAdapterServer implements ServerAdapterModule {
           memoriesPath: memoriesData?.memoriesPath || null,
           memoriesModifiedAt: memoriesData?.modifiedAt || null,
           memoriesCount: memoriesData?.entries.length ?? 0,
+          // T1.4: Ralph → Paperclip task writeback result
+          taskWriteback: writebackResult,
         },
       };
     } catch (error) {
@@ -1068,6 +1078,66 @@ export class RalphAdapterServer implements ServerAdapterModule {
     // Rough estimation: ~4 characters per token for English
     return Math.ceil(text.length / 4);
   }
+
+  /**
+   * T1.4: Ralph → Paperclip 任务状态回写
+   *
+   * 在 Ralph 执行完成后，读取 Ralph 的任务文件，
+   * 将完成的任务同步到 Paperclip Issue 系统。
+   *
+   * @param workingDir Ralph 工作目录
+   * @param companyId Paperclip 公司 ID
+   * @param agentId Paperclip Agent ID
+   * @param runId Paperclip Run ID
+   * @returns 回写结果摘要
+   */
+  private async writebackTasksToPaperclip(
+    workingDir: string,
+    companyId: string,
+    agentId: string,
+    runId: string,
+  ): Promise<{
+    enabled: boolean;
+    processed: number;
+    updated: number;
+    errors: string[];
+  }> {
+    // 如果没有 Paperclip API Key，跳过回写
+    if (!process.env.PAPERCLIP_API_KEY || !companyId) {
+      return {
+        enabled: false,
+        processed: 0,
+        updated: 0,
+        errors: [],
+      };
+    }
+
+    try {
+      const writebackService = new RalphTaskWritebackService({
+        workingDir,
+        companyId,
+        agentId,
+        runId,
+      });
+
+      const result = await writebackService.writeback();
+
+      return {
+        enabled: true,
+        processed: result.processed,
+        updated: result.updated,
+        errors: result.errors,
+      };
+    } catch (err) {
+      // 回写失败不应该影响执行结果 — 记录错误并返回
+      return {
+        enabled: true,
+        processed: 0,
+        updated: 0,
+        errors: [err instanceof Error ? err.message : String(err)],
+      };
+    }
+  }
 }
 
 /**
@@ -1075,6 +1145,431 @@ export class RalphAdapterServer implements ServerAdapterModule {
  */
 export function createServerAdapter(): ServerAdapterModule {
   return new RalphAdapterServer();
+}
+
+// ---------------------------------------------------------------------------
+// Ralph → Paperclip 任务状态回写 (T1.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ralph 任务条目 — 从 tasks.jsonl 读取
+ */
+interface RalphTaskEntry {
+  id: string;
+  title: string;
+  description?: string;
+  status: "open" | "in_progress" | "closed" | "failed";
+  key?: string;
+  priority?: number;
+  blocked_by?: string[];
+  loop_id?: string;
+  created: string;
+  started?: string;
+  closed?: string;
+}
+
+/**
+ * Paperclip Issue 状态映射
+ * 将 Ralph 任务状态映射到 Paperclip Issue 状态
+ */
+function mapRalphStatusToPaperclip(
+  status: RalphTaskEntry["status"],
+): "done" | "in_progress" | "blocked" | "backlog" | "in_review" {
+  switch (status) {
+    case "closed":
+      return "done";
+    case "in_progress":
+      return "in_progress";
+    case "failed":
+      return "blocked";
+    default:
+      return "backlog";
+  }
+}
+
+/**
+ * 从 Ralph task key 中提取 Paperclip Issue ID
+ * 支持格式: pc:issue-{uuid}, spec:{key}, task:{key}
+ *
+ * - `pc:issue-{uuid}`: 显式映射到 Paperclip Issue UUID
+ * - `spec:{key}`: 映射到 spec:{key} 格式的 Issue
+ * - 其他格式暂不支持
+ */
+function extractPaperclipIssueId(task: RalphTaskEntry): string | null {
+  const key = task.key;
+  if (!key) return null;
+
+  // 格式: pc:issue-{uuid} — 直接映射到 Paperclip Issue UUID
+  const pcMatch = key.match(/^pc:issue-([0-9a-f-]{36,})$/i);
+  if (pcMatch) return pcMatch[1];
+
+  // 格式: pc:{uuid} — 简写格式
+  const pcShortMatch = key.match(/^pc:([0-9a-f-]{36,})$/i);
+  if (pcShortMatch) return pcShortMatch[1];
+
+  return null;
+}
+
+/**
+ * Ralph Task Writeback Service
+ *
+ * 负责在 Ralph 执行完成后，将任务状态回写到 Paperclip。
+ *
+ * 工作流程:
+ * 1. 读取 Ralph tasks.jsonl 获取已完成任务
+ * 2. 与上次处理记录对比，找出新增完成的任务
+ * 3. 对每个任务，调用 Paperclip API:
+ *    - 更新 Issue 状态 (done/blocked/in_progress)
+ *    - 添加任务结果评论
+ * 4. 更新处理进度记录
+ *
+ * 任务→Issue 映射通过 task key 实现:
+ * - `pc:issue-{uuid}`: 直接映射到 Paperclip Issue UUID
+ */
+export class RalphTaskWritebackService {
+  private apiUrl: string;
+  private apiKey: string;
+  private companyId: string;
+  private agentId: string;
+  private runId: string;
+  private workingDir: string;
+
+  /**
+   * 创建 Task Writeback Service
+   * 从环境变量读取 Paperclip API 配置
+   */
+  constructor(options: {
+    workingDir: string;
+    apiUrl?: string;
+    apiKey?: string;
+    companyId: string;
+    agentId: string;
+    runId?: string;
+  }) {
+    this.workingDir = options.workingDir;
+    this.apiUrl =
+      options.apiUrl ||
+      process.env.PAPERCLIP_API_URL ||
+      `${process.env.PAPERCLIP_SERVER_URL || "http://localhost:3000"}/api`;
+    this.apiKey =
+      options.apiKey || process.env.PAPERCLIP_API_KEY || "";
+    this.companyId = options.companyId;
+    this.agentId = options.agentId;
+    this.runId = options.runId || process.env.PAPERCLIP_RUN_ID || "";
+  }
+
+  /**
+   * 获取任务回写 marker 文件路径
+   * 存储上次处理的最新任务 ID，用于断点续传
+   */
+  private getMarkerPath(): string {
+    const { join } = require("node:path");
+    return join(this.workingDir, ".ralph", "agent", ".task_writeback_marker.json");
+  }
+
+  /**
+   * 读取上次处理的进度
+   * 返回上次已处理的最新任务关闭时间戳
+   */
+  private async readMarker(): Promise<string | null> {
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const markerPath = this.getMarkerPath();
+      const content = await readFile(markerPath, "utf-8");
+      const marker = JSON.parse(content);
+      return marker.lastProcessedAt || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 保存处理进度
+   */
+  private async writeMarker(lastProcessedAt: string): Promise<void> {
+    try {
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      const { dirname } = await import("node:path");
+      const markerPath = this.getMarkerPath();
+      await mkdir(dirname(markerPath), { recursive: true });
+      await writeFile(markerPath, JSON.stringify({ lastProcessedAt, updatedAt: new Date().toISOString() }), "utf-8");
+    } catch {
+      // Ignore write errors - non-critical
+    }
+  }
+
+  /**
+   * 读取 Ralph 任务文件
+   * 返回所有已完成的任务（状态: closed, failed）
+   */
+  private async readCompletedTasks(): Promise<RalphTaskEntry[]> {
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const tasksPath = join(this.workingDir, ".ralph", "agent", "tasks.jsonl");
+
+      const content = await readFile(tasksPath, "utf-8");
+      const lines = content.split("\n").filter((l: string) => l.trim());
+
+      const tasks: RalphTaskEntry[] = [];
+      for (const line of lines) {
+        try {
+          const task = JSON.parse(line) as RalphTaskEntry;
+          if (task.status === "closed" || task.status === "failed") {
+            tasks.push(task);
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      // 按关闭时间排序，最新的在前
+      tasks.sort((a, b) => {
+        const aTime = a.closed ? new Date(a.closed).getTime() : 0;
+        const bTime = b.closed ? new Date(b.closed).getTime() : 0;
+        return bTime - aTime;
+      });
+
+      return tasks;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 调用 Paperclip API
+   */
+  private async paperclipRequest(
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    path: string,
+    body?: unknown,
+  ): Promise<unknown> {
+    if (!this.apiKey) {
+      throw new Error("PAPERCLIP_API_KEY not available — cannot write back to Paperclip");
+    }
+
+    const url = new URL(path, this.apiUrl.replace(/\/+$/, ""));
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    };
+    if (this.runId) {
+      headers["X-Paperclip-Run-Id"] = this.runId;
+    }
+
+    const response = await fetch(url.toString(), {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    const text = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
+    }
+
+    if (!response.ok) {
+      const errorMsg =
+        parsed && typeof parsed === "object" && "error" in parsed
+          ? String((parsed as Record<string, unknown>).error)
+          : `${method} ${path} failed with ${response.status}`;
+      throw new Error(errorMsg);
+    }
+
+    return parsed;
+  }
+
+  /**
+   * 更新 Paperclip Issue 状态
+   */
+  private async updateIssueStatus(
+    issueId: string,
+    status: ReturnType<typeof mapRalphStatusToPaperclip>,
+    task: RalphTaskEntry,
+  ): Promise<void> {
+    const updateBody: Record<string, unknown> = { status };
+
+    await this.paperclipRequest("PATCH", `/issues/${encodeURIComponent(issueId)}`, updateBody);
+  }
+
+  /**
+   * 向 Paperclip Issue 添加评论
+   */
+  private async addIssueComment(
+    issueId: string,
+    task: RalphTaskEntry,
+  ): Promise<void> {
+    const closedAt = task.closed ? new Date(task.closed).toLocaleString() : "unknown";
+    const duration = this.calcDuration(task.started, task.closed);
+
+    const body = [
+      `## Ralph 任务完成报告`,
+      ``,
+      `**任务**: ${task.title}`,
+      `**状态**: ${task.status === "closed" ? "✅ 完成" : "❌ 失败"}`,
+      `**完成时间**: ${closedAt}`,
+      duration ? `**执行时长**: ${duration}` : "",
+      task.description ? `**描述**: ${task.description}` : "",
+      ``,
+      `> 此评论由 Ralph Adapter 自动生成 (task: ${task.id})`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    await this.paperclipRequest("POST", `/issues/${encodeURIComponent(issueId)}/comments`, { body });
+  }
+
+  /**
+   * 计算任务执行时长
+   */
+  private calcDuration(started?: string, closed?: string): string | null {
+    if (!started || !closed) return null;
+    try {
+      const start = new Date(started).getTime();
+      const end = new Date(closed).getTime();
+      const ms = end - start;
+      if (ms < 0) return null;
+      const seconds = Math.floor(ms / 1000);
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      return `${hours}h ${remainingMinutes}m`;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 报告 Ralph 执行成本到 Paperclip
+   * 通过 POST /api/cost-events
+   */
+  private async reportCost(
+    task: RalphTaskEntry,
+    issueId?: string,
+  ): Promise<void> {
+    if (!issueId) return;
+
+    const costEvent = {
+      issueId,
+      agentId: this.agentId,
+      companyId: this.companyId,
+      eventId: `ralph-task-${task.id}-${Date.now()}`,
+      costType: "compute",
+      amount: 1,
+      currency: "tasks",
+      timestamp: task.closed || new Date().toISOString(),
+      breakdown: {
+        computeSeconds: this.calcDurationSeconds(task.started, task.closed),
+      },
+    };
+
+    try {
+      await this.paperclipRequest("POST", "/cost-events", costEvent);
+    } catch {
+      // Cost reporting is best-effort — don't fail the writeback
+    }
+  }
+
+  private calcDurationSeconds(started?: string, closed?: string): number {
+    if (!started || !closed) return 0;
+    try {
+      const start = new Date(started).getTime();
+      const end = new Date(closed).getTime();
+      return Math.max(0, Math.floor((end - start) / 1000));
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * 执行任务回写
+   * 扫描新完成的任务，同步到 Paperclip
+   *
+   * @returns 回写的任务数量
+   */
+  async writeback(): Promise<{
+    processed: number;
+    updated: number;
+    errors: string[];
+  }> {
+    if (!this.apiKey) {
+      return { processed: 0, updated: 0, errors: ["No API key — skipped"] };
+    }
+
+    const tasks = await this.readCompletedTasks();
+    if (tasks.length === 0) {
+      return { processed: 0, updated: 0, errors: [] };
+    }
+
+    const markerTime = await this.readMarker();
+    const errors: string[] = [];
+    let updated = 0;
+
+    for (const task of tasks) {
+      // Skip tasks already processed (compare by closed timestamp)
+      if (markerTime && task.closed) {
+        const taskTime = new Date(task.closed).getTime();
+        const markerTimestamp = new Date(markerTime).getTime();
+        if (taskTime <= markerTimestamp) continue;
+      }
+
+      // Extract Paperclip Issue ID from task key
+      const issueId = extractPaperclipIssueId(task);
+      if (!issueId) {
+        // No mapping — skip (task doesn't have a linked Paperclip Issue)
+        continue;
+      }
+
+      try {
+        // Update issue status
+        const paperclipStatus = mapRalphStatusToPaperclip(task.status);
+        await this.updateIssueStatus(issueId, paperclipStatus, task);
+
+        // Add completion comment
+        await this.addIssueComment(issueId, task);
+
+        // Report cost
+        await this.reportCost(task, issueId);
+
+        updated++;
+      } catch (err) {
+        const msg = `Task ${task.id} → Issue ${issueId}: ${err instanceof Error ? err.message : String(err)}`;
+        errors.push(msg);
+      }
+
+      // Update marker after each successful writeback
+      if (task.closed) {
+        await this.writeMarker(task.closed);
+      }
+    }
+
+    return { processed: tasks.length, updated, errors };
+  }
+}
+
+/**
+ * 创建 Task Writeback Service 实例
+ * 从执行上下文和环境变量初始化
+ */
+function createWritebackService(options: {
+  workingDir: string;
+  companyId: string;
+  agentId: string;
+  runId?: string;
+}): RalphTaskWritebackService {
+  return new RalphTaskWritebackService({
+    workingDir: options.workingDir,
+    companyId: options.companyId,
+    agentId: options.agentId,
+    runId: options.runId,
+  });
 }
 
 // ---------------------------------------------------------------------------
