@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { ensurePostgresDatabase, getPostgresDataDirectory } from "./client.js";
@@ -141,6 +141,7 @@ async function ensureEmbeddedPostgresConnection(
     port: selectedPort,
     persistent: true,
     initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+    postgresFlags: ["-c", "unix_socket_directories=" + path.join(dataDir, "sock")],
     onLog: logBuffer.append,
     onError: logBuffer.append,
   });
@@ -158,6 +159,10 @@ async function ensureEmbeddedPostgresConnection(
   }
   if (existsSync(postmasterPidFile)) {
     rmSync(postmasterPidFile, { force: true });
+  }
+  const sockDir = path.join(dataDir, "sock");
+  if (!existsSync(sockDir)) {
+    mkdirSync(sockDir, { recursive: true });
   }
   try {
     await instance.start();

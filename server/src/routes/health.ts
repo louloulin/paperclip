@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { and, count, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { heartbeatRuns, instanceUserRoles, invites } from "@paperclipai/db";
 import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
+import { getDevRequestActivityStatus } from "../dev-request-activity.js";
 import { readPersistedDevServerStatus, toDevServerHealthStatus } from "../dev-server-status.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { serverVersion } from "../version.js";
@@ -73,6 +74,7 @@ export function healthRoutes(
     if (persistedDevServerStatus) {
       const instanceSettings = instanceSettingsService(db);
       const experimentalSettings = await instanceSettings.getExperimental();
+      const requestActivity = getDevRequestActivityStatus();
       const activeRunCount = await db
         .select({ count: count() })
         .from(heartbeatRuns)
@@ -82,6 +84,9 @@ export function healthRoutes(
       devServer = toDevServerHealthStatus(persistedDevServerStatus, {
         autoRestartEnabled: experimentalSettings.autoRestartDevServerWhenIdle ?? false,
         activeRunCount,
+        activeRequestCount: requestActivity.activeRequestCount,
+        recentRequestActivity: requestActivity.recentRequestActivity,
+        lastRequestFinishedAt: requestActivity.lastRequestFinishedAt,
       });
     }
 

@@ -64,6 +64,36 @@ describe("dev server status helpers", () => {
     });
   });
 
+  it("treats recent request activity as not idle for auto-restart gating", () => {
+    const health = toDevServerHealthStatus(
+      {
+        dirty: true,
+        lastChangedAt: "2026-03-20T12:00:00.000Z",
+        changedPathCount: 1,
+        changedPathsSample: ["server/src/app.ts"],
+        pendingMigrations: [],
+        lastRestartAt: "2026-03-20T11:30:00.000Z",
+      },
+      {
+        autoRestartEnabled: true,
+        activeRunCount: 0,
+        activeRequestCount: 0,
+        recentRequestActivity: true,
+        lastRequestFinishedAt: "2026-03-20T12:00:08.000Z",
+      },
+    );
+
+    expect(health).toMatchObject({
+      enabled: true,
+      restartRequired: true,
+      waitingForIdle: true,
+      activeRunCount: 0,
+      activeRequestCount: 0,
+      recentRequestActivity: true,
+      lastRequestFinishedAt: "2026-03-20T12:00:08.000Z",
+    });
+  });
+
   it("ignores oversized persisted status files", () => {
     const filePath = createTempStatusFile({
       dirty: true,

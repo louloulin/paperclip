@@ -8,6 +8,9 @@ export type DevServerHealthStatus = {
   pendingMigrations: string[];
   autoRestartEnabled: boolean;
   activeRunCount: number;
+  activeRequestCount: number;
+  recentRequestActivity: boolean;
+  lastRequestFinishedAt: string | null;
   waitingForIdle: boolean;
   lastRestartAt: string | null;
 };

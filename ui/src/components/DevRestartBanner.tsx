@@ -31,6 +31,15 @@ export function DevRestartBanner({ devServer }: { devServer?: DevServerHealthSta
 
   const changedAt = formatRelativeTimestamp(devServer.lastChangedAt);
   const sample = devServer.changedPathsSample.slice(0, 3);
+  const lastRequestAt = formatRelativeTimestamp(devServer.lastRequestFinishedAt);
+  const idleWaitLabel =
+    devServer.activeRunCount > 0
+      ? `Waiting for ${devServer.activeRunCount} live run${devServer.activeRunCount === 1 ? "" : "s"} to finish`
+      : devServer.activeRequestCount > 0
+        ? `Waiting for ${devServer.activeRequestCount} in-flight request${devServer.activeRequestCount === 1 ? "" : "s"} to finish`
+        : devServer.recentRequestActivity
+          ? `Waiting for recent app activity to settle${lastRequestAt ? ` (${lastRequestAt})` : ""}`
+          : "Waiting for the instance to become idle";
 
   return (
     <div className="border-b border-amber-300/60 bg-amber-50 text-amber-950 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100">
@@ -69,7 +78,7 @@ export function DevRestartBanner({ devServer }: { devServer?: DevServerHealthSta
           {devServer.waitingForIdle ? (
             <div className="inline-flex items-center gap-2 rounded-full bg-amber-900/10 px-3 py-1.5 dark:bg-amber-100/10">
               <TimerReset className="h-3.5 w-3.5" />
-              <span>Waiting for {devServer.activeRunCount} live run{devServer.activeRunCount === 1 ? "" : "s"} to finish</span>
+              <span>{idleWaitLabel}</span>
             </div>
           ) : devServer.autoRestartEnabled ? (
             <div className="inline-flex items-center gap-2 rounded-full bg-amber-900/10 px-3 py-1.5 dark:bg-amber-100/10">

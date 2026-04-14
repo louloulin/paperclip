@@ -5,6 +5,7 @@
 <p align="center">
   <a href="#quickstart"><strong>Quickstart</strong></a> &middot;
   <a href="https://paperclip.ing/docs"><strong>Docs</strong></a> &middot;
+  <a href="doc/zh/README.md"><strong>中文文档</strong></a> &middot;
   <a href="https://github.com/paperclipai/paperclip"><strong>GitHub</strong></a> &middot;
   <a href="https://discord.gg/m4HZY7xNG3"><strong>Discord</strong></a>
 </p>
@@ -199,6 +200,19 @@ pnpm dev
 This starts the API server at `http://localhost:3100`. An embedded PostgreSQL database is created automatically — no setup required.
 
 > **Requirements:** Node.js 20+, pnpm 9.15+
+
+<br/>
+
+## Chinese Docs
+
+For a codebase-oriented Chinese guide to Paperclip, see [doc/zh/README.md](doc/zh/README.md).
+
+It covers:
+
+- product positioning and core concepts
+- monorepo architecture and package boundaries
+- control-plane services, UI, and data model
+- heartbeat runtime, adapters, plugins, MCP, CLI, and reading paths
 
 <br/>
 

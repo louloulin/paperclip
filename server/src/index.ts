@@ -1,5 +1,5 @@
 /// <reference path="./types/express.d.ts" />
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -375,6 +375,7 @@ export async function startServer(): Promise<StartedServer> {
           port,
           persistent: true,
           initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+          postgresFlags: ["-c", "unix_socket_directories=" + resolve(dataDir, "sock")],
           onLog: appendEmbeddedPostgresLog,
           onError: appendEmbeddedPostgresLog,
         });
@@ -396,6 +397,10 @@ export async function startServer(): Promise<StartedServer> {
         if (existsSync(postmasterPidFile)) {
           logger.warn("Removing stale embedded PostgreSQL lock file");
           rmSync(postmasterPidFile, { force: true });
+        }
+        const sockDir = resolve(dataDir, "sock");
+        if (!existsSync(sockDir)) {
+          mkdirSync(sockDir, { recursive: true });
         }
         try {
           await embeddedPostgres.start();
