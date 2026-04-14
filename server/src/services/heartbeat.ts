@@ -90,6 +90,7 @@ const SESSIONED_LOCAL_ADAPTERS = new Set([
   "gemini_local",
   "opencode_local",
   "pi_local",
+  "ralph_local", // T1.3: Ralph local adapter — enables session persistence + child process tracking
 ]);
 
 type RuntimeConfigSecretResolver = Pick<

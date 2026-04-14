@@ -44,6 +44,240 @@ export type {
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
+// Ralph Skill Loader — T1.6: 统一 Skill 加载框架
+// ---------------------------------------------------------------------------
+
+/**
+ * Ralph Skill 条目 — 从文件系统或 CLI 发现
+ */
+interface RalphSkillEntry {
+  name: string;
+  description: string;
+  source: "builtin" | "ralph_cli" | "filesystem";
+  sourcePath?: string;
+  enabled?: boolean;
+}
+
+/**
+ * RalphSkillLoader — 统一 Ralph Skills 加载框架
+ *
+ * 负责从多个来源发现和加载 Ralph Skills：
+ * 1. Built-in Skills (内存中定义)
+ * 2. Ralph CLI (`ralph tools skill list`)
+ * 3. 文件系统 (`.ralph/skills/` 和 `~/.ralph/skills/`)
+ *
+ * 实现 Paperclip Skill System ↔ Ralph Tools Framework 统一加载。
+ */
+export class RalphSkillLoader {
+  private cachedSkills: RalphSkillEntry[] | null = null;
+  private cacheTime: number = 0;
+  private readonly cacheTtlMs: number = 30_000; // 30s 缓存
+
+  /**
+   * 获取所有可用的 Ralph Skills
+   * 合并 Built-in + CLI 发现 + 文件系统
+   */
+  async discoverSkills(): Promise<RalphSkillEntry[]> {
+    const now = Date.now();
+    if (this.cachedSkills && now - this.cacheTime < this.cacheTtlMs) {
+      return this.cachedSkills;
+    }
+
+    const skills: RalphSkillEntry[] = [...BUILTIN_SKILL_ENTRIES.map((s) => ({
+      name: s.name,
+      description: s.description,
+      source: "builtin" as const,
+    }))];
+
+    // 从 CLI 发现自定义 Skills
+    const cliSkills = await this.discoverFromCLI();
+    for (const skill of cliSkills) {
+      if (!skills.find((s) => s.name === skill.name)) {
+        skills.push(skill);
+      }
+    }
+
+    // 从文件系统发现 Skills
+    const fsSkills = await this.discoverFromFilesystem();
+    for (const skill of fsSkills) {
+      if (!skills.find((s) => s.name === skill.name)) {
+        skills.push(skill);
+      }
+    }
+
+    this.cachedSkills = skills;
+    this.cacheTime = now;
+    return skills;
+  }
+
+  /**
+   * 从 Ralph CLI 发现 Skills
+   * 执行 `ralph tools skill list` 并解析输出
+   */
+  private async discoverFromCLI(): Promise<RalphSkillEntry[]> {
+    const skills: RalphSkillEntry[] = [];
+    const configPaths = [
+      join(process.env.HOME || "", ".ralph", "config.yml"),
+      join(process.env.HOME || "", ".ralph", "config.yaml"),
+    ];
+
+    let ralphPath = "ralph";
+    // 尝试从配置中发现 ralph 路径
+    for (const configPath of configPaths) {
+      try {
+        const { readFile } = await import("node:fs/promises");
+        const content = await readFile(configPath, "utf-8");
+        const match = content.match(/ralph_path:\s*(.+)/);
+        if (match) {
+          ralphPath = match[1].trim();
+          break;
+        }
+      } catch {
+        // Continue
+      }
+    }
+
+    try {
+      const output = await this.execQuiet(`${ralphPath} tools skill list --format json`, 10_000);
+      const parsed = JSON.parse(output);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          skills.push({
+            name: item.name || item.id || String(item),
+            description: item.description || item.detail || "",
+            source: "ralph_cli",
+            sourcePath: item.sourcePath || item.path || undefined,
+          });
+        }
+      }
+    } catch {
+      // Ralph CLI 不可用或输出非 JSON，忽略
+    }
+
+    return skills;
+  }
+
+  /**
+   * 从文件系统发现 Skills
+   * 扫描 `.ralph/skills/` 和 `~/.ralph/skills/` 目录
+   */
+  private async discoverFromFilesystem(): Promise<RalphSkillEntry[]> {
+    const skills: RalphSkillEntry[] = [];
+    const dirs = [
+      join(process.env.HOME || "", ".ralph", "skills"),
+      join(process.env.HOME || "", ".claude", "skills"),
+    ];
+
+    for (const dir of dirs) {
+      try {
+        const { readdir, readFile } = await import("node:fs/promises");
+        const entries = await readdir(dir, { withFileTypes: true });
+
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const skillDir = join(dir, entry.name);
+
+          // 尝试读取 skill.md 或 README.md 获取描述
+          let description = `Ralph skill: ${entry.name}`;
+          for (const mdFile of ["skill.md", "README.md", "description.md"]) {
+            try {
+              const mdPath = join(skillDir, mdFile);
+              const { readFile: rf } = await import("node:fs/promises");
+              const content = await rf(mdPath, "utf-8");
+              // 取第一行作为描述
+              const firstLine = content.split("\n").find((l) => l.trim() && !l.startsWith("#"));
+              if (firstLine) {
+                description = firstLine.trim().slice(0, 200);
+                break;
+              }
+            } catch {
+              // Continue
+            }
+          }
+
+          skills.push({
+            name: entry.name,
+            description,
+            source: "filesystem",
+            sourcePath: skillDir,
+          });
+        }
+      } catch {
+        // Directory doesn't exist, skip
+      }
+    }
+
+    return skills;
+  }
+
+  /**
+   * 加载指定 Skill
+   * 执行 `ralph tools skill load <name>`
+   */
+  async loadSkill(skillName: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const output = await this.execQuiet(`ralph tools skill load ${skillName}`, 15_000);
+      this.invalidateCache();
+      return { success: output.includes("loaded") || output.includes("Loaded") || true };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  }
+
+  /**
+   * 检查 Skill 是否可用
+   */
+  async isSkillAvailable(skillName: string): Promise<boolean> {
+    const skills = await this.discoverSkills();
+    return skills.some((s) => s.name === skillName);
+  }
+
+  /**
+   * 获取 Skill 详情
+   */
+  async getSkillInfo(skillName: string): Promise<RalphSkillEntry | null> {
+    const skills = await this.discoverSkills();
+    return skills.find((s) => s.name === skillName) || null;
+  }
+
+  /**
+   * 使缓存失效
+   */
+  invalidateCache(): void {
+    this.cachedSkills = null;
+    this.cacheTime = 0;
+  }
+
+  /**
+   * 执行命令并返回 stdout (超时后忽略错误)
+   */
+  private execQuiet(cmd: string, timeoutMs: number): Promise<string> {
+    return new Promise((resolve) => {
+      let stdout = "";
+      const proc = spawn(cmd, { shell: true, timeout: timeoutMs });
+      proc.stdout?.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      proc.on("close", () => resolve(stdout.trim()));
+      proc.on("error", () => resolve(""));
+      setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {
+          // Ignore
+        }
+        resolve(stdout.trim());
+      }, timeoutMs);
+    });
+  }
+}
+
+/**
+ * 全局 Skill Loader 实例 (单例)
+ */
+const globalSkillLoader = new RalphSkillLoader();
+
+// ---------------------------------------------------------------------------
 // Standalone skill functions (exported for server registry)
 // ---------------------------------------------------------------------------
 
@@ -58,17 +292,59 @@ const BUILTIN_SKILL_ENTRIES: { name: string; description: string }[] = [
   { name: "memory", description: "Memory management" },
 ];
 
-function buildRalphSkillSnapshot(desiredSkills: string[]): AdapterSkillSnapshot {
-  const entries = BUILTIN_SKILL_ENTRIES.map((skill) => ({
-    key: skill.name,
-    runtimeName: skill.name,
-    desired: desiredSkills.includes(skill.name),
-    managed: true,
-    state: "installed" as const,
-    origin: "company_managed" as const,
-    originLabel: "Ralph built-in",
-    detail: skill.description,
-  }));
+/**
+ * 构建 Ralph Skill Snapshot
+ * 合并 Built-in Skills 和动态发现的 Custom Skills
+ */
+async function buildRalphSkillSnapshotWithDiscovery(
+  desiredSkills: string[],
+): Promise<AdapterSkillSnapshot> {
+  // 获取动态发现的 Skills (包含 CLI 和文件系统来源)
+  const discovered = await globalSkillLoader.discoverSkills();
+
+  const entries: import("@paperclipai/adapter-utils").AdapterSkillEntry[] = [];
+  const warnings: string[] = [];
+  const builtinSet = new Set(BUILTIN_SKILL_ENTRIES.map((s) => s.name));
+  const discoveredNames = new Set(discovered.map((s) => s.name));
+
+  // Built-in Skills (始终安装)
+  for (const skill of BUILTIN_SKILL_ENTRIES) {
+    entries.push({
+      key: skill.name,
+      runtimeName: skill.name,
+      desired: desiredSkills.includes(skill.name),
+      managed: true,
+      state: "installed" as const,
+      origin: "company_managed" as const,
+      originLabel: "Ralph built-in",
+      detail: skill.description,
+    });
+  }
+
+  // Custom Skills (从 CLI/文件系统发现)
+  for (const skill of discovered) {
+    if (builtinSet.has(skill.name)) continue; // 跳过 builtin
+    entries.push({
+      key: skill.name,
+      runtimeName: skill.source === "builtin" ? skill.name : null,
+      desired: desiredSkills.includes(skill.name),
+      managed: skill.source === "filesystem",
+      state: skill.enabled !== false ? "available" as const : "missing" as const,
+      origin: skill.source === "ralph_cli" ? "external_unknown" as const : "user_installed" as const,
+      originLabel: skill.source === "ralph_cli" ? "Ralph CLI" : skill.sourcePath || "Filesystem",
+      detail: skill.description,
+      sourcePath: skill.sourcePath || null,
+    });
+  }
+
+  // 检查 desiredSkills 中是否有未发现的 Skill
+  for (const skill of desiredSkills) {
+    if (!discoveredNames.has(skill) && !builtinSet.has(skill)) {
+      warnings.push(
+        `Skill "${skill}" is not available — install with \`ralph tools skill load ${skill}\``,
+      );
+    }
+  }
 
   return {
     adapterType: "ralph_local",
@@ -76,43 +352,34 @@ function buildRalphSkillSnapshot(desiredSkills: string[]): AdapterSkillSnapshot 
     mode: "persistent" as const,
     desiredSkills,
     entries,
-    warnings: [],
+    warnings,
   };
 }
 
 export async function listRalphSkills(
   _ctx: AdapterSkillContext,
 ): Promise<AdapterSkillSnapshot> {
-  return buildRalphSkillSnapshot(BUILTIN_SKILL_ENTRIES.map((s) => s.name));
+  return buildRalphSkillSnapshotWithDiscovery(BUILTIN_SKILL_ENTRIES.map((s) => s.name));
 }
 
 export async function syncRalphSkills(
   ctx: AdapterSkillContext,
   desiredSkills: string[],
 ): Promise<AdapterSkillSnapshot> {
-  // Ralph's built-in tools are always available.
-  // Custom skills from Ralph's skills/ dir are tracked as "available".
-  const result = buildRalphSkillSnapshot(desiredSkills);
-  // Warn about any desired skills not in Ralph's built-in set
-  const builtinNames = new Set(BUILTIN_SKILL_ENTRIES.map((s) => s.name));
-  for (const skill of desiredSkills) {
-    if (!builtinNames.has(skill)) {
-      result.entries.push({
-        key: skill,
-        runtimeName: null,
-        desired: true,
-        managed: false,
-        state: "available",
-        origin: "external_unknown",
-        originLabel: "Ralph or external",
-        detail: `Skill "${skill}" may be available via Ralph's skills/ directory`,
-      });
-      result.warnings.push(
-        `Skill "${skill}" is not a Ralph built-in tool — check your Ralph skills/ directory`,
-      );
+  // T1.6: 尝试加载请求的 custom skills via Ralph CLI
+  const discovered = await globalSkillLoader.discoverSkills();
+  const builtinSet = new Set(BUILTIN_SKILL_ENTRIES.map((s) => s.name));
+
+  for (const skillName of desiredSkills) {
+    if (builtinSet.has(skillName)) continue; // 内置 Skill 不需要加载
+    const isAvailable = await globalSkillLoader.isSkillAvailable(skillName);
+    if (!isAvailable) {
+      // 尝试通过 CLI 加载
+      await globalSkillLoader.loadSkill(skillName);
     }
   }
-  return result;
+
+  return buildRalphSkillSnapshotWithDiscovery(desiredSkills);
 }
 
 // ---------------------------------------------------------------------------
@@ -808,6 +1075,32 @@ export class RalphAdapterServer implements ServerAdapterModule {
  */
 export function createServerAdapter(): ServerAdapterModule {
   return new RalphAdapterServer();
+}
+
+// ---------------------------------------------------------------------------
+// Standalone server functions (exported for Paperclip server registry)
+// Matches the same signature as other adapters (claude-local, codex-local, etc.)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ralph adapter execute function — wraps RalphAdapterServer.execute()
+ * This is the main entry point called by Paperclip's heartbeat service
+ * when running a Ralph agent.
+ */
+export async function execute(
+  ctx: AdapterExecutionContext,
+): Promise<AdapterExecutionResult> {
+  return createServerAdapter().execute(ctx);
+}
+
+/**
+ * Ralph adapter testEnvironment function — wraps RalphAdapterServer.testEnvironment()
+ * Validates that Ralph CLI is installed and the working directory is accessible.
+ */
+export async function testEnvironment(
+  ctx: AdapterEnvironmentTestContext,
+): Promise<AdapterEnvironmentTestResult> {
+  return createServerAdapter().testEnvironment(ctx);
 }
 
 /**
