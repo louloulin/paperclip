@@ -14,6 +14,7 @@ import {
   Zap,
   Shield,
   Key,
+  Users,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -118,6 +119,7 @@ export function Sidebar() {
           <SidebarNavItem to="/waves" label="Waves" icon={Zap} />
           <SidebarNavItem to="/compliance" label="Compliance" icon={Shield} />
           <SidebarNavItem to="/sso" label="SSO" icon={Key} />
+          <SidebarNavItem to="/departments" label="Departments" icon={Users} />
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
         </SidebarSection>
 

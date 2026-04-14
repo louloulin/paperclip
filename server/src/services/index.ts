@@ -32,4 +32,5 @@ export { notifyHireApproved, type NotifyHireApprovedInput } from "./hire-hook.js
 export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";
 export { reconcilePersistedRuntimeServicesOnStartup, restartDesiredRuntimeServicesOnStartup } from "./workspace-runtime.js";
 export { ssoService } from "./sso.js";
+export { departmentService, DEFAULT_DEPARTMENT_ROLE_PERMISSIONS } from "./departments.js";
 export { createStorageServiceFromConfig, getStorageService } from "../storage/index.js";
