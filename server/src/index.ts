@@ -375,7 +375,6 @@ export async function startServer(): Promise<StartedServer> {
           port,
           persistent: true,
           initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
-          postgresFlags: ["-c", "unix_socket_directories=" + resolve(dataDir, "sock")],
           onLog: appendEmbeddedPostgresLog,
           onError: appendEmbeddedPostgresLog,
         });

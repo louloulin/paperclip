@@ -954,5 +954,155 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       }]);
       return updated!;
     },
+
+    // T2.2: Budget pre-check for Ralph adapter — returns soft warnings + hard stop status
+    // Unlike getInvocationBlock, this also returns utilization and soft alert info
+    getBudgetPrecheck: async (
+      companyId: string,
+      agentId: string,
+      options?: { projectId?: string | null },
+    ) => {
+      const companyPolicy = await db
+        .select()
+        .from(budgetPolicies)
+        .where(
+          and(
+            eq(budgetPolicies.companyId, companyId),
+            eq(budgetPolicies.scopeType, "company"),
+            eq(budgetPolicies.scopeId, companyId),
+            eq(budgetPolicies.isActive, true),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+
+      const agentPolicy = await db
+        .select()
+        .from(budgetPolicies)
+        .where(
+          and(
+            eq(budgetPolicies.companyId, companyId),
+            eq(budgetPolicies.scopeType, "agent"),
+            eq(budgetPolicies.scopeId, agentId),
+            eq(budgetPolicies.isActive, true),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+
+      const projectPolicy = options?.projectId
+        ? await db
+          .select()
+          .from(budgetPolicies)
+          .where(
+            and(
+              eq(budgetPolicies.companyId, companyId),
+              eq(budgetPolicies.scopeType, "project"),
+              eq(budgetPolicies.scopeId, options.projectId),
+              eq(budgetPolicies.isActive, true),
+            ),
+          )
+          .then((rows) => rows[0] ?? null)
+        : null;
+
+      type PolicyResult = {
+        policyId: string;
+        scopeType: BudgetScopeType;
+        scopeId: string;
+        scopeName: string;
+        metric: string;
+        windowKind: string;
+        amount: number;
+        observedAmount: number;
+        remainingAmount: number;
+        utilizationPercent: number;
+        warnPercent: number;
+        hardStopEnabled: boolean;
+        status: "ok" | "warning" | "hard_stop";
+        windowStart: Date;
+        windowEnd: Date;
+      };
+
+      async function buildPolicyResult(policy: PolicyRow | null): Promise<PolicyResult | null> {
+        if (!policy || !policy.isActive || policy.amount <= 0) return null;
+        const observedAmount = await computeObservedAmount(db, policy);
+        const amount = policy.amount;
+        const remainingAmount = Math.max(0, amount - observedAmount);
+        const utilizationPercent = amount > 0 ? Number(((observedAmount / amount) * 100).toFixed(2)) : 0;
+        const scopeName = policy.scopeType === "company"
+          ? "Company"
+          : policy.scopeType === "agent"
+            ? "Agent"
+            : "Project";
+
+        let status: PolicyResult["status"] = "ok";
+        if (observedAmount >= amount) status = "hard_stop";
+        else if (observedAmount >= Math.ceil((amount * policy.warnPercent) / 100)) status = "warning";
+
+        const { start, end } = resolveWindow(policy.windowKind as BudgetWindowKind);
+
+        return {
+          policyId: policy.id,
+          scopeType: policy.scopeType as BudgetScopeType,
+          scopeId: policy.scopeId,
+          scopeName,
+          metric: policy.metric,
+          windowKind: policy.windowKind,
+          amount,
+          observedAmount,
+          remainingAmount,
+          utilizationPercent,
+          warnPercent: policy.warnPercent,
+          hardStopEnabled: policy.hardStopEnabled,
+          status,
+          windowStart: start,
+          windowEnd: end,
+        };
+      }
+
+      const companyResult = await buildPolicyResult(companyPolicy);
+      const agentResult = await buildPolicyResult(agentPolicy);
+      const projectResult = await buildPolicyResult(projectPolicy);
+
+      const allPolicies = [companyResult, agentResult, projectResult].filter(Boolean) as PolicyResult[];
+
+      // Collect soft warnings (utilization >= warnPercent but < 100%)
+      const softWarnings = allPolicies
+        .filter((p) => p.status === "warning")
+        .map((p) => ({
+          scopeType: p.scopeType,
+          scopeId: p.scopeId,
+          scopeName: p.scopeName,
+          metric: p.metric,
+          utilizationPercent: p.utilizationPercent,
+          warnPercent: p.warnPercent,
+          amount: p.amount,
+          observedAmount: p.observedAmount,
+          remainingAmount: p.remainingAmount,
+          message: `${p.scopeName} budget is ${p.utilizationPercent}% used (warning threshold: ${p.warnPercent}%)`,
+        }));
+
+      // Check hard stop (already handled by getInvocationBlock, but included for adapter visibility)
+      const hardStop = allPolicies
+        .filter((p) => p.status === "hard_stop")
+        .map((p) => ({
+          scopeType: p.scopeType,
+          scopeId: p.scopeId,
+          scopeName: p.scopeName,
+          reason: `${p.scopeName} budget hard-stop exceeded (${p.utilizationPercent}% used). New work blocked.`,
+        }))[0] ?? null;
+
+      return {
+        companyId,
+        agentId,
+        projectId: options?.projectId ?? null,
+        checkedAt: new Date().toISOString(),
+        companyPolicy: companyResult,
+        agentPolicy: agentResult,
+        projectPolicy: projectResult,
+        softWarnings,
+        hardStop,
+        hasWarnings: softWarnings.length > 0,
+        hasHardStop: hardStop !== null,
+      };
+    },
   };
 }

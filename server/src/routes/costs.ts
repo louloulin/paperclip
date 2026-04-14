@@ -214,6 +214,18 @@ export function costRoutes(db: Db) {
     res.json(overview);
   });
 
+  // T2.2: Budget pre-check endpoint for Ralph adapter
+  // Returns soft warnings, utilization, and hard-stop status before Ralph execution
+  router.get("/companies/:companyId/agents/:agentId/budget-precheck", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const agentId = req.params.agentId as string;
+    assertCompanyAccess(req, companyId);
+    const precheck = await budgets.getBudgetPrecheck(companyId, agentId, {
+      projectId: req.query.projectId as string | null ?? null,
+    });
+    res.json(precheck);
+  });
+
   router.post(
     "/companies/:companyId/budgets/policies",
     validate(upsertBudgetPolicySchema),

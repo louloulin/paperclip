@@ -43,6 +43,14 @@ export type {
   MemorySearchOptions,
 } from "../types.js";
 
+// Re-export budget types for external use
+export type {
+  RalphBudgetPrecheckResult,
+  BudgetPolicyInfo,
+  BudgetSoftWarning,
+  BudgetHardStop,
+} from "./budget.js";
+
 // ---------------------------------------------------------------------------
 // Ralph Skill Loader — T1.6: 统一 Skill 加载框架
 // ---------------------------------------------------------------------------
@@ -656,6 +664,25 @@ export class RalphAdapterServer implements ServerAdapterModule {
       (sessionParams.maxLoops as number) || (config.maxLoops as number) || undefined;
     const timeoutSec = (config.timeoutSec as number) || 300;
 
+    // T2.2: Budget pre-check before Ralph execution
+    // (Hard-stop is handled by Paperclip Heartbeat's getInvocationBlock,
+    // this returns soft warnings and utilization info for Ralph's awareness)
+    let budgetPrecheck: import("./budget.js").RalphBudgetPrecheckResult | null = null;
+    if (process.env.PAPERCLIP_API_KEY && ctx.agent.companyId && ctx.agent.id) {
+      try {
+        const { RalphBudgetService } = await import("./budget.js");
+        const budgetService = new RalphBudgetService({
+          companyId: ctx.agent.companyId,
+          agentId: ctx.agent.id,
+        });
+        budgetPrecheck = await budgetService.precheck(
+          ctx.context?.projectId as string | null ?? null,
+        );
+      } catch {
+        // Non-critical - budget check failure should not block execution
+      }
+    }
+
     // Build Ralph command arguments
     const ralphArgs: string[] = ["run"];
 
@@ -748,6 +775,8 @@ export class RalphAdapterServer implements ServerAdapterModule {
           memoriesCount: memoriesData?.entries.length ?? 0,
           // T1.4: Ralph → Paperclip task writeback result
           taskWriteback: writebackResult,
+          // T2.2: Budget pre-check — soft warnings + utilization info (hard-stop handled by heartbeat)
+          budgetCheck: budgetPrecheck,
         },
       };
     } catch (error) {
