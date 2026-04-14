@@ -1154,7 +1154,7 @@ export function createServerAdapter(): ServerAdapterModule {
 /**
  * Ralph 任务条目 — 从 tasks.jsonl 读取
  */
-interface RalphTaskEntry {
+export interface RalphTaskEntry {
   id: string;
   title: string;
   description?: string;
