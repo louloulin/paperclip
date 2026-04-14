@@ -23,6 +23,7 @@ import type {
 } from "./types.js";
 import {
   AGENT_HIRE_CHAIN_TEMPLATE as AGENT_HIRE_CFG,
+  AGENT_FIRE_CHAIN_TEMPLATE as AGENT_FIRE_CFG,
   BUDGET_EXCEED_CHAIN_TEMPLATE as BUDGET_EXCEED_CFG,
   STRATEGY_APPROVE_CHAIN_TEMPLATE as STRATEGY_APPROVE_CFG,
 } from "./types.js";
@@ -32,6 +33,8 @@ function getDefaultChainConfig(type: ApprovalChainType): ApprovalChainConfig {
   switch (type) {
     case "agent_hire_chain":
       return AGENT_HIRE_CFG;
+    case "agent_fire_chain":
+      return AGENT_FIRE_CFG;
     case "budget_exceed_chain":
       return BUDGET_EXCEED_CFG;
     case "strategy_approve_chain":
@@ -444,6 +447,7 @@ export function approvalChainEngine(db: Db) {
 function mapChainTypeToApprovalType(chainType: ApprovalChainType): string {
   switch (chainType) {
     case "agent_hire_chain": return "hire_agent";
+    case "agent_fire_chain": return "fire_agent";
     case "budget_exceed_chain": return "budget_override_required";
     case "strategy_approve_chain": return "approve_ceo_strategy";
     case "board_level_chain": return "request_board_approval";

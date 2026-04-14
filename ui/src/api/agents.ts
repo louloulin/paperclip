@@ -55,6 +55,12 @@ export interface OrgNode {
 export interface AgentHireResponse {
   agent: Agent;
   approval: Approval | null;
+  chainId: string | null;
+}
+
+export interface AgentFireResponse {
+  agent: Agent;
+  chainId: string;
 }
 
 export interface AgentPermissionUpdate {
@@ -148,6 +154,10 @@ export const agentsApi = {
   resume: (id: string, companyId?: string) => api.post<Agent>(agentPath(id, companyId, "/resume"), {}),
   terminate: (id: string, companyId?: string) => api.post<Agent>(agentPath(id, companyId, "/terminate"), {}),
   remove: (id: string, companyId?: string) => api.delete<{ ok: true }>(agentPath(id, companyId)),
+  fire: (companyId: string, agentId: string, reason?: string) =>
+    api.post<AgentFireResponse>(`/companies/${companyId}/agent-fires`, { agentId, reason }),
+  moveReportsTo: (companyId: string, agentId: string, newReportsTo: string | null) =>
+    api.patch<Agent>(`/companies/${companyId}/agents/${agentId}/reports-to`, { newReportsTo }),
   listKeys: (id: string, companyId?: string) => api.get<AgentKey[]>(agentPath(id, companyId, "/keys")),
   skills: (id: string, companyId?: string) =>
     api.get<AgentSkillSnapshot>(agentPath(id, companyId, "/skills")),

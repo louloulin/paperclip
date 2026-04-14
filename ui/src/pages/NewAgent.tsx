@@ -125,7 +125,12 @@ export function NewAgent() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) });
       queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
-      navigate(agentUrl(result.agent));
+      if (result.chainId) {
+        // Navigate to approvals page to show chain approval
+        navigate(`/approvals?chainId=${result.chainId}`);
+      } else {
+        navigate(agentUrl(result.agent));
+      }
     },
     onError: (error) => {
       setFormError(error instanceof Error ? error.message : "Failed to create agent");

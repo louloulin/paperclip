@@ -10,6 +10,7 @@ import { z } from "zod";
 import { approvalChainEngine } from "../approval-chain/engine.js";
 import { assertCompanyAccess, assertBoard, getActorInfo } from "./authz.js";
 import { logActivity } from "../services/activity-log.js";
+import { agentService, approvalService, heartbeatService } from "../services/index.js";
 import type { ApprovalChainType, CreateApprovalChainInput } from "../approval-chain/types.js";
 import { APPROVAL_CHAIN_TYPES } from "../approval-chain/types.js";
 
@@ -58,6 +59,9 @@ const rejectChainSchema = z.object({
 export function approvalChainRoutes(db: Db) {
   const router = Router();
   const engine = approvalChainEngine(db);
+  const agentSvc = agentService(db);
+  const approvalsSvc = approvalService(db);
+  const heartbeatSvc = heartbeatService(db);
 
   // ============================================================
   // List chains for a company
@@ -183,6 +187,45 @@ export function approvalChainRoutes(db: Db) {
       skip: req.body.skip,
       skipReason: req.body.skipReason,
     });
+
+    // Sync agent status when chain completes
+    if (isComplete && baseApprovalId) {
+      const baseApproval = await approvalsSvc.getById(baseApprovalId);
+      if (baseApproval) {
+        const payload = baseApproval.payload as Record<string, unknown> | undefined;
+        const agentId = payload?.agentId as string | undefined;
+        if (agentId) {
+          if (detail.type === "agent_hire_chain") {
+            // Activate pending agent
+            await agentSvc.update(agentId, { status: "idle" });
+            await logActivity(db, {
+              companyId: detail.companyId,
+              actorType: "user",
+              actorId: actor.actorType === "user" ? actor.actorId : "board",
+              agentId: actor.agentId,
+              action: "agent.hire_approved",
+              entityType: "agent",
+              entityId: agentId,
+              details: { chainId: id },
+            });
+          } else if (detail.type === "agent_fire_chain") {
+            // Terminate agent
+            await agentSvc.update(agentId, { status: "terminated" });
+            await heartbeatSvc.cancelActiveForAgent(agentId);
+            await logActivity(db, {
+              companyId: detail.companyId,
+              actorType: "user",
+              actorId: actor.actorType === "user" ? actor.actorId : "board",
+              agentId: actor.agentId,
+              action: "agent.terminated",
+              entityType: "agent",
+              entityId: agentId,
+              details: { chainId: id },
+            });
+          }
+        }
+      }
+    }
 
     await logActivity(db, {
       companyId: detail.companyId,

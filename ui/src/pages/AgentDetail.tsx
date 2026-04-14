@@ -791,6 +791,26 @@ export function AgentDetail() {
     },
   });
 
+  const fireMutation = useMutation({
+    mutationFn: async (_vars?: { reason?: string }) => {
+      if (!resolvedCompanyId || !agent?.id) return Promise.reject(new Error("No company or agent"));
+      return agentsApi.fire(resolvedCompanyId, agent.id, _vars?.reason);
+    },
+    onSuccess: (result) => {
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(routeAgentRef) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentLookupRef) });
+      if (resolvedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(resolvedCompanyId) });
+      }
+      navigate(`/approvals?chainId=${result.chainId}`);
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : "Fire request failed");
+    },
+  });
+
   const budgetMutation = useMutation({
     mutationFn: (amount: number) =>
       budgetsApi.upsertPolicy(resolvedCompanyId!, {
@@ -993,6 +1013,18 @@ export function AgentDetail() {
                 <Trash2 className="h-3 w-3" />
                 Terminate
               </button>
+              {agent && agent.status !== "terminated" && agent.status !== "pending_approval" && (
+                <button
+                  className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-orange-500"
+                  onClick={() => {
+                    fireMutation.mutate(undefined);
+                    setMoreOpen(false);
+                  }}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Request Fire (Approval)
+                </button>
+              )}
             </PopoverContent>
           </Popover>
         </div>

@@ -21,6 +21,7 @@ export type ApprovalChainStepStatus = (typeof APPROVAL_CHAIN_STEP_STATUSES)[numb
 /** 链式审批类型 */
 export const APPROVAL_CHAIN_TYPES = [
   "agent_hire_chain",    // 招聘 Agent 多步审批
+  "agent_fire_chain",    // 解雇 Agent 多步审批
   "budget_exceed_chain", // 预算超限审批
   "strategy_approve_chain", // 战略审批
   "board_level_chain",    // 董事会级审批
@@ -134,6 +135,28 @@ export const STRATEGY_APPROVE_CHAIN_TEMPLATE: ApprovalChainConfig = {
     },
   ],
   timeoutHours: 168, // 1 week
+};
+
+/** Agent Fire Chain: direct_manager → board */
+export const AGENT_FIRE_CHAIN_TEMPLATE: ApprovalChainConfig = {
+  steps: [
+    {
+      name: "直属上级审批",
+      requiredRole: "direct_manager",
+      skippable: true,
+      skipCondition: "no_direct_reports",
+    },
+    {
+      name: "董事会终审",
+      requiredRole: "board",
+    },
+  ],
+  timeoutHours: 48,
+  autoEscalation: {
+    enabled: true,
+    afterHours: 24,
+    escalateTo: "board",
+  },
 };
 
 // ============================================================

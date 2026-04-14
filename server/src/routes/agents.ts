@@ -70,6 +70,7 @@ import {
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
 import { getTelemetryClient } from "../telemetry.js";
+import { approvalChainEngine } from "../approval-chain/engine.js";
 
 export function agentRoutes(db: Db) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
@@ -98,6 +99,7 @@ export function agentRoutes(db: Db) {
   const approvalsSvc = approvalService(db);
   const budgets = budgetService(db);
   const heartbeat = heartbeatService(db);
+  const chainEngine = approvalChainEngine(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const secretsSvc = secretService(db);
   const instructions = agentInstructionsService();
@@ -1346,6 +1348,7 @@ export function agentRoutes(db: Db) {
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
 
     let approval: Awaited<ReturnType<typeof approvalsSvc.getById>> | null = null;
+    let chainId: string | null = null;
     const actor = getActorInfo(req);
 
     if (requiresApproval) {
@@ -1398,6 +1401,23 @@ export function agentRoutes(db: Db) {
         updatedAt: new Date(),
       });
 
+      // Also create approval chain for multi-step approval flow
+      const { chain } = await chainEngine.createChain(companyId, {
+        type: "agent_hire_chain",
+        name: `招聘 ${normalizedHireInput.name}`,
+        requestedByAgentId: actor.actorType === "agent" ? actor.actorId : null,
+        requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
+        payload: {
+          name: normalizedHireInput.name,
+          role: normalizedHireInput.role,
+          title: normalizedHireInput.title ?? null,
+          reportsTo: normalizedHireInput.reportsTo ?? null,
+          adapterType: requestedAdapterType,
+          agentId: agent.id,
+        },
+      });
+      chainId = chain.id;
+
       if (sourceIssueIds.length > 0) {
         await issueApprovalsSvc.linkManyForApproval(approval.id, sourceIssueIds, {
           agentId: actor.actorType === "agent" ? actor.actorId : null,
@@ -1420,6 +1440,7 @@ export function agentRoutes(db: Db) {
         role: agent.role,
         requiresApproval,
         approvalId: approval?.id ?? null,
+        chainId,
         issueIds: sourceIssueIds,
         desiredSkills: desiredSkillAssignment.desiredSkills,
       },
@@ -1449,7 +1470,7 @@ export function agentRoutes(db: Db) {
       });
     }
 
-    res.status(201).json({ agent, approval });
+    res.status(201).json({ agent, approval, chainId });
   });
 
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
@@ -2045,6 +2066,112 @@ export function agentRoutes(db: Db) {
     });
 
     res.json({ ok: true });
+  });
+
+  // ── Agent Fire (with approval chain) ─────────────────────────────────────
+
+  /**
+   * Request to fire an agent — creates an approval chain.
+   * Agent is only terminated when the chain is fully approved.
+   */
+  router.post("/companies/:companyId/agent-fires", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const { agentId, reason } = req.body as { agentId: string; reason?: string };
+    assertCompanyAccess(req, companyId);
+
+    if (!agentId) {
+      res.status(400).json({ error: "agentId is required" });
+      return;
+    }
+
+    const agent = await svc.getById(agentId);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    if (agent.companyId !== companyId) {
+      res.status(403).json({ error: "Agent does not belong to this company" });
+      return;
+    }
+    if (agent.status === "terminated" || agent.status === "pending_approval") {
+      res.status(400).json({ error: `Agent is already ${agent.status}` });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    const { chain } = await chainEngine.createChain(companyId, {
+      type: "agent_fire_chain",
+      name: `解雇 ${agent.name}`,
+      requestedByAgentId: actor.actorType === "agent" ? actor.actorId : null,
+      requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
+      payload: {
+        agentId: agent.id,
+        agentName: agent.name,
+        agentRole: agent.role,
+        reason: reason ?? null,
+      },
+    });
+
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "agent.fire_requested",
+      entityType: "agent",
+      entityId: agent.id,
+      details: { chainId: chain.id, reason: reason ?? null },
+    });
+
+    res.status(201).json({ agent, chainId: chain.id });
+  });
+
+  /**
+   * Agent restructuring: update reportsTo (org chart drag-and-drop).
+   */
+  router.patch("/companies/:companyId/agents/:agentId/reports-to", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const agentId = req.params.agentId as string;
+    const { newReportsTo } = req.body as { newReportsTo: string | null };
+    assertCompanyAccess(req, companyId);
+
+    const agent = await svc.getById(agentId);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    if (agent.companyId !== companyId) {
+      res.status(403).json({ error: "Agent does not belong to this company" });
+      return;
+    }
+
+    // The service's updateAgent handles cycle detection automatically
+    let updated;
+    try {
+      updated = await svc.update(agentId, {
+        reportsTo: newReportsTo ?? undefined,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Update failed";
+      res.status(400).json({ error: message });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "agent.reports_to_changed",
+      entityType: "agent",
+      entityId: agentId,
+      details: { oldReportsTo: agent.reportsTo, newReportsTo: newReportsTo ?? null },
+    });
+
+    res.json(updated);
   });
 
   router.get("/agents/:id/keys", async (req, res) => {
