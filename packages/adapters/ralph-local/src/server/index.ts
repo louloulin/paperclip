@@ -18,6 +18,7 @@ import type {
   AdapterSkillContext,
   AdapterSkillSnapshot,
   AdapterAgent,
+  AdapterSessionCodec,
 } from "@paperclipai/adapter-utils";
 
 // Re-export Ralph-specific types
@@ -37,6 +38,82 @@ export type {
   IssueUpdate,
   SearchMemoriesOptions,
 } from "../types.js";
+
+// ---------------------------------------------------------------------------
+// Standalone skill functions (exported for server registry)
+// ---------------------------------------------------------------------------
+
+const BUILTIN_SKILL_ENTRIES: { name: string; description: string }[] = [
+  { name: "read", description: "Read file contents" },
+  { name: "edit", description: "Edit file contents" },
+  { name: "write", description: "Write/create files" },
+  { name: "bash", description: "Execute shell commands" },
+  { name: "glob", description: "Find files by pattern" },
+  { name: "grep", description: "Search file contents" },
+  { name: "task", description: "Create/subagent tasks" },
+  { name: "memory", description: "Memory management" },
+];
+
+function buildRalphSkillSnapshot(desiredSkills: string[]): AdapterSkillSnapshot {
+  const entries = BUILTIN_SKILL_ENTRIES.map((skill) => ({
+    key: skill.name,
+    runtimeName: skill.name,
+    desired: desiredSkills.includes(skill.name),
+    managed: true,
+    state: "installed" as const,
+    origin: "company_managed" as const,
+    originLabel: "Ralph built-in",
+    detail: skill.description,
+  }));
+
+  return {
+    adapterType: "ralph_local",
+    supported: true,
+    mode: "persistent" as const,
+    desiredSkills,
+    entries,
+    warnings: [],
+  };
+}
+
+export async function listRalphSkills(
+  _ctx: AdapterSkillContext,
+): Promise<AdapterSkillSnapshot> {
+  return buildRalphSkillSnapshot(BUILTIN_SKILL_ENTRIES.map((s) => s.name));
+}
+
+export async function syncRalphSkills(
+  ctx: AdapterSkillContext,
+  desiredSkills: string[],
+): Promise<AdapterSkillSnapshot> {
+  // Ralph's built-in tools are always available.
+  // Custom skills from Ralph's skills/ dir are tracked as "available".
+  const result = buildRalphSkillSnapshot(desiredSkills);
+  // Warn about any desired skills not in Ralph's built-in set
+  const builtinNames = new Set(BUILTIN_SKILL_ENTRIES.map((s) => s.name));
+  for (const skill of desiredSkills) {
+    if (!builtinNames.has(skill)) {
+      result.entries.push({
+        key: skill,
+        runtimeName: null,
+        desired: true,
+        managed: false,
+        state: "available",
+        origin: "external_unknown",
+        originLabel: "Ralph or external",
+        detail: `Skill "${skill}" may be available via Ralph's skills/ directory`,
+      });
+      result.warnings.push(
+        `Skill "${skill}" is not a Ralph built-in tool — check your Ralph skills/ directory`,
+      );
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// RalphAdapterServer class
+// ---------------------------------------------------------------------------
 
 /**
  * Ralph Adapter Server 实现
@@ -71,13 +148,22 @@ export class RalphAdapterServer implements ServerAdapterModule {
     let stdout = "";
     let stderr = "";
 
-    // Extract Ralph configuration from adapter config
-    const ralphPath = (ctx.config.ralphPath as string) || "ralph";
-    const workingDir = (ctx.config.workingDirectory as string) || this.workingDirectory;
-    const hatCollection = (ctx.config.hatCollection as string) || "default";
-    const defaultHat = (ctx.config.defaultHat as string) || undefined;
-    const maxLoops = (ctx.config.maxLoops as number) || undefined;
-    const timeoutSec = (ctx.config.timeoutSec as number) || 300;
+    // Merge sessionParams (from codec/resume) with config, sessionParams wins
+    const sessionParams = ctx.runtime.sessionParams ?? {};
+    const config = ctx.config ?? {};
+
+    const ralphPath = (config.ralphPath as string) || "ralph";
+    const workingDir =
+      (sessionParams.workingDir as string) ||
+      (config.workingDirectory as string) ||
+      this.workingDirectory;
+    const hatCollection =
+      (sessionParams.hatCollection as string) || (config.hatCollection as string) || "default";
+    const defaultHat =
+      (sessionParams.defaultHat as string) || (config.defaultHat as string) || undefined;
+    const maxLoops =
+      (sessionParams.maxLoops as number) || (config.maxLoops as number) || undefined;
+    const timeoutSec = (config.timeoutSec as number) || 300;
 
     // Build Ralph command arguments
     const ralphArgs: string[] = ["run"];
@@ -131,6 +217,7 @@ export class RalphAdapterServer implements ServerAdapterModule {
         errorMessage: result.exitCode !== 0 ? stderr || "Ralph execution failed" : null,
         usage,
         sessionParams: {
+          adapterId: this.adapterId,
           hatCollection,
           defaultHat,
           workingDir,
@@ -205,40 +292,6 @@ export class RalphAdapterServer implements ServerAdapterModule {
       status,
       checks,
       testedAt: new Date().toISOString(),
-    };
-  }
-
-  async listSkills(ctx: AdapterSkillContext): Promise<AdapterSkillSnapshot> {
-    // Ralph has built-in tools that can be used as "skills"
-    const builtinSkills = [
-      { name: "read", description: "Read file contents" },
-      { name: "edit", description: "Edit file contents" },
-      { name: "write", description: "Write/create files" },
-      { name: "bash", description: "Execute shell commands" },
-      { name: "glob", description: "Find files by pattern" },
-      { name: "grep", description: "Search file contents" },
-      { name: "task", description: "Create/subagent tasks" },
-      { name: "memory", description: "Memory management" },
-    ];
-
-    const entries = builtinSkills.map((skill) => ({
-      key: skill.name,
-      runtimeName: skill.name,
-      desired: true,
-      managed: true,
-      state: "installed" as const,
-      origin: "company_managed" as const,
-      originLabel: "Ralph built-in",
-      detail: skill.description,
-    }));
-
-    return {
-      adapterType: "ralph_local",
-      supported: true,
-      mode: "persistent" as const,
-      desiredSkills: builtinSkills.map((s) => s.name),
-      entries,
-      warnings: [],
     };
   }
 
@@ -483,3 +536,87 @@ export class RalphAdapterServer implements ServerAdapterModule {
 export function createServerAdapter(): ServerAdapterModule {
   return new RalphAdapterServer();
 }
+
+/**
+ * Helper to read a non-empty string from an unknown value, trying multiple keys.
+ */
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+/**
+ * Session codec for Ralph adapter.
+ * Serializes/deserializes Ralph-specific session params:
+ * - hatCollection: Hat Collection name
+ * - defaultHat: Default Hat name
+ * - workingDir: Working directory
+ * - maxLoops: Max loop iterations
+ * - adapterId: Ralph adapter instance ID
+ */
+export const sessionCodec: AdapterSessionCodec = {
+  deserialize(raw: unknown) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+    const record = raw as Record<string, unknown>;
+    const adapterId =
+      readNonEmptyString(record.adapterId) ?? readNonEmptyString(record.adapter_id);
+    if (!adapterId) return null;
+
+    const hatCollection =
+      readNonEmptyString(record.hatCollection) ??
+      readNonEmptyString(record.hat_collection);
+    const defaultHat =
+      readNonEmptyString(record.defaultHat) ?? readNonEmptyString(record.default_hat);
+    const workingDir =
+      readNonEmptyString(record.workingDir) ??
+      readNonEmptyString(record.working_dir) ??
+      readNonEmptyString(record.cwd);
+    const maxLoops = record.maxLoops ?? record.max_loops;
+    const timeoutSec = record.timeoutSec ?? record.timeout_sec;
+
+    return {
+      adapterId,
+      ...(hatCollection ? { hatCollection } : {}),
+      ...(defaultHat ? { defaultHat } : {}),
+      ...(workingDir ? { workingDir } : {}),
+      ...(typeof maxLoops === "number" ? { maxLoops } : {}),
+      ...(typeof timeoutSec === "number" ? { timeoutSec } : {}),
+    };
+  },
+
+  serialize(params: Record<string, unknown> | null) {
+    if (!params) return null;
+    const adapterId =
+      readNonEmptyString(params.adapterId) ?? readNonEmptyString(params.adapter_id);
+    if (!adapterId) return null;
+
+    const hatCollection =
+      readNonEmptyString(params.hatCollection) ??
+      readNonEmptyString(params.hat_collection);
+    const defaultHat =
+      readNonEmptyString(params.defaultHat) ?? readNonEmptyString(params.default_hat);
+    const workingDir =
+      readNonEmptyString(params.workingDir) ??
+      readNonEmptyString(params.working_dir) ??
+      readNonEmptyString(params.cwd);
+    const maxLoops = params.maxLoops ?? params.max_loops;
+    const timeoutSec = params.timeoutSec ?? params.timeout_sec;
+
+    return {
+      adapterId,
+      ...(hatCollection ? { hatCollection } : {}),
+      ...(defaultHat ? { defaultHat } : {}),
+      ...(workingDir ? { workingDir } : {}),
+      ...(typeof maxLoops === "number" ? { maxLoops } : {}),
+      ...(typeof timeoutSec === "number" ? { timeoutSec } : {}),
+    };
+  },
+
+  getDisplayId(params: Record<string, unknown> | null) {
+    if (!params) return null;
+    return (
+      readNonEmptyString(params.adapterId) ??
+      readNonEmptyString(params.adapter_id) ??
+      null
+    );
+  },
+};

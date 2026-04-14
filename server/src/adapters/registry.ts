@@ -85,6 +85,17 @@ import { buildExternalAdapters } from "./plugin-loader.js";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
+import {
+  execute as ralphExecute,
+  listRalphSkills,
+  syncRalphSkills,
+  testEnvironment as ralphTestEnvironment,
+  sessionCodec as ralphSessionCodec,
+} from "@paperclipai/adapter-ralph-local/server";
+import {
+  agentConfigurationDoc as ralphAgentConfigurationDoc,
+  models as ralphModels,
+} from "@paperclipai/adapter-ralph-local";
 
 const claudeLocalAdapter: ServerAdapterModule = {
   type: "claude_local",
@@ -204,6 +215,19 @@ const builtinFallbacks = new Map<string, ServerAdapterModule>();
 // external.  Persisted across reloads via the same disabled-adapters store.
 const pausedOverrides = new Set<string>();
 
+const ralphLocalAdapter: ServerAdapterModule = {
+  type: "ralph_local",
+  execute: ralphExecute,
+  testEnvironment: ralphTestEnvironment,
+  listSkills: listRalphSkills,
+  syncSkills: syncRalphSkills,
+  sessionCodec: ralphSessionCodec,
+  sessionManagement: getAdapterSessionManagement("ralph_local") ?? undefined,
+  models: ralphModels,
+  supportsLocalAgentJwt: true,
+  agentConfigurationDoc: ralphAgentConfigurationDoc,
+};
+
 function registerBuiltInAdapters() {
   for (const adapter of [
     claudeLocalAdapter,
@@ -214,6 +238,7 @@ function registerBuiltInAdapters() {
     geminiLocalAdapter,
     openclawGatewayAdapter,
     hermesLocalAdapter,
+    ralphLocalAdapter,
     processAdapter,
     httpAdapter,
   ]) {
