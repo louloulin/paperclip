@@ -86,3 +86,8 @@ export {
   agentMessages,
 } from "./agent-collaboration.js";
 export { webhooks, webhookDeliveries } from "./webhooks.js";
+export {
+  adapterMarketplace,
+  adapterMarketplaceReviews,
+  adapterMarketplaceInstalls,
+} from "./adapter-marketplace.js";

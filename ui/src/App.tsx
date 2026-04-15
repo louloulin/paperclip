@@ -45,6 +45,7 @@ import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettin
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { AdapterManager } from "./pages/AdapterManager";
+import { AdapterMarketplace } from "./pages/AdapterMarketplace";
 import { PluginPage } from "./pages/PluginPage";
 import { IssueChatUxLab } from "./pages/IssueChatUxLab";
 import { RunTranscriptUxLab } from "./pages/RunTranscriptUxLab";
@@ -191,6 +192,7 @@ function boardRoutes() {
       <Route path="collaboration" element={<AgentCollaboration />} />
       <Route path="webhooks" element={<Webhooks />} />
       <Route path="api-docs" element={<ApiDocs />} />
+      <Route path="adapter-marketplace" element={<AdapterMarketplace />} />
       <Route path="inbox" element={<InboxRootRedirect />} />
       <Route path="inbox/mine" element={<Inbox />} />
       <Route path="inbox/recent" element={<Inbox />} />

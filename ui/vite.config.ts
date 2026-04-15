@@ -17,7 +17,7 @@ export default defineConfig({
     watch: process.cwd().startsWith("/mnt/") ? { usePolling: true, interval: 1000 } : undefined,
     proxy: {
       "/api": {
-        target: "http://localhost:3103",
+        target: "http://localhost:3104",
         ws: true,
       },
     },
