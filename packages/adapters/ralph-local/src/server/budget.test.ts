@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { RalphBudgetService, type RalphBudgetPrecheckResult } from "./budget.js";
 
 // Mock global fetch
-const mockFetch = vi.fn();
+const mockFetch = vi.fn() as unknown as typeof fetch;
 global.fetch = mockFetch;
 
 describe("RalphBudgetService (T2.2)", () => {

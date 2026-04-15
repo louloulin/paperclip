@@ -141,7 +141,6 @@ async function ensureEmbeddedPostgresConnection(
     port: selectedPort,
     persistent: true,
     initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
-    postgresFlags: ["-c", "unix_socket_directories=" + path.join(dataDir, "sock")],
     onLog: logBuffer.append,
     onError: logBuffer.append,
   });
