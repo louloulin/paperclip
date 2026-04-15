@@ -15,6 +15,7 @@ import {
   Shield,
   Key,
   Users,
+  TrendingUp,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -120,6 +121,7 @@ export function Sidebar() {
           <SidebarNavItem to="/compliance" label="Compliance" icon={Shield} />
           <SidebarNavItem to="/sso" label="SSO" icon={Key} />
           <SidebarNavItem to="/departments" label="Departments" icon={Users} />
+          <SidebarNavItem to="/demo-leads" label="Sales CRM" icon={TrendingUp} />
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
         </SidebarSection>
 

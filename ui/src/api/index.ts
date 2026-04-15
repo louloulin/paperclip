@@ -20,3 +20,4 @@ export { companySkillsApi } from "./companySkills";
 export { wavesApi } from "./waves";
 export { complianceApi } from "./compliance";
 export { departmentsApi } from "./departments";
+export { demoLeadsApi } from "./demo-leads";
