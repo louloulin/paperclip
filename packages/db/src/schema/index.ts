@@ -85,3 +85,4 @@ export {
   knowledgeShares,
   agentMessages,
 } from "./agent-collaboration.js";
+export { webhooks, webhookDeliveries } from "./webhooks.js";

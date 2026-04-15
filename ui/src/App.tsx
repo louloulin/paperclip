@@ -30,6 +30,7 @@ import { DemoLeads } from "./pages/DemoLeads";
 import { SkillMart } from "./pages/SkillMart";
 import { CompanyTemplates } from "./pages/CompanyTemplates";
 import { AgentCollaboration } from "./pages/AgentCollaboration";
+import { Webhooks } from "./pages/Webhooks";
 import { Waves } from "./pages/Waves";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
@@ -187,6 +188,7 @@ function boardRoutes() {
       <Route path="skill-mart" element={<SkillMart />} />
       <Route path="templates" element={<CompanyTemplates />} />
       <Route path="collaboration" element={<AgentCollaboration />} />
+      <Route path="webhooks" element={<Webhooks />} />
       <Route path="inbox" element={<InboxRootRedirect />} />
       <Route path="inbox/mine" element={<Inbox />} />
       <Route path="inbox/recent" element={<Inbox />} />

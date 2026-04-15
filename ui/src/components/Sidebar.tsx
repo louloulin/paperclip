@@ -19,6 +19,7 @@ import {
   Store,
   LayoutGrid,
   GitBranch,
+  Webhook,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -128,6 +129,7 @@ export function Sidebar() {
           <SidebarNavItem to="/skill-mart" label="SkillMart" icon={Store} />
           <SidebarNavItem to="/templates" label="Templates" icon={LayoutGrid} />
           <SidebarNavItem to="/collaboration" label="Collaboration" icon={GitBranch} />
+          <SidebarNavItem to="/webhooks" label="Webhooks" icon={Webhook} />
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
         </SidebarSection>
 
