@@ -14,6 +14,7 @@ import {
   Sparkles,
   Terminal,
   Cpu,
+  Workflow,
 } from "lucide-react";
 import { OpenCodeLogoIcon } from "@/components/OpenCodeLogoIcon";
 import { HermesIcon } from "@/components/HermesIcon";
@@ -107,6 +108,12 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Internal HTTP adapter",
     icon: Cpu,
     comingSoon: true,
+  },
+  ralph_local: {
+    label: "Ralph Orchestrator",
+    description: "Multi-hat orchestration engine with memory bank and parallel task execution",
+    icon: Workflow,
+    recommended: true,
   },
 };
 

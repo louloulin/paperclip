@@ -57,6 +57,12 @@ export const help: Record<string, string> = {
   cooldownSec: "Minimum seconds between consecutive heartbeat runs.",
   maxConcurrentRuns: "Maximum number of heartbeat runs that can execute simultaneously for this agent.",
   budgetMonthlyCents: "Monthly spending limit in cents. 0 means no limit.",
+  hatCollection: "Name or path of the Ralph Hat Collection to use (e.g. default, coder-reviewer).",
+  defaultHat: "Name of the Hat to execute by default when a task is received.",
+  ralphPath: "Path to the Ralph CLI binary. Leave blank to use 'ralph' from PATH.",
+  maxLoops: "Maximum number of Ralph loop iterations before the agent stops. 0 means unlimited.",
+  maxConcurrency: "Maximum number of concurrent tasks Ralph can process in parallel.",
+  enableMemoryBank: "Enable Ralph Memory Bank to persist patterns, decisions, and fixes across sessions.",
 };
 
 import { getAdapterLabels } from "../adapters/adapter-display-registry";

@@ -46,6 +46,9 @@ function createValuesForAdapterType(
     nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
   } else if (adapterType === "opencode_local") {
     nextValues.model = "";
+  } else if (adapterType === "ralph_local") {
+    // Ralph uses hat collections instead of models
+    nextValues.model = "";
   }
   return nextValues;
 }

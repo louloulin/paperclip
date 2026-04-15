@@ -15,7 +15,8 @@
   "exports": {
     ".": "./dist/index.js",
     "./server": "./dist/server/index.js",
-    "./types": "./dist/types.js"
+    "./types": "./dist/types.js",
+    "./ui": "./dist/ui/index.js"
   },
   "publishConfig": {
     "access": "public",
@@ -31,6 +32,10 @@
       "./types": {
         "types": "./dist/types.d.js",
         "import": "./dist/types.js"
+      },
+      "./ui": {
+        "types": "./dist/ui/index.d.js",
+        "import": "./dist/ui/index.js"
       }
     },
     "main": "./dist/index.js",
