@@ -116,3 +116,86 @@ export const skillMartApi = {
     return api.post(`/skill-mart/${skillId}/download`, {});
   },
 };
+
+// ── Stripe Payment API ─────────────────────────────────────────────────────────
+
+export interface StripeCheckoutResponse {
+  sessionId: string;
+  sessionUrl?: string;
+  paymentSessionId: string;
+  amount: number;
+  currency: string;
+  platformFee: number;
+  sellerAmount: number;
+  alreadyPurchased?: boolean;
+  purchaseId?: string;
+}
+
+export interface StripePurchase {
+  id: string;
+  skillId: string;
+  skillName?: string;
+  skillSlug?: string;
+  amount: string;
+  currency: string;
+  platformFee: string;
+  status: "active" | "refunded";
+  purchasedAt: string;
+}
+
+export interface StripeSale {
+  id: string;
+  skillId: string;
+  skillName?: string;
+  amount: string;
+  currency: string;
+  platformFee: string;
+  sellerAmount: string;
+  status: string;
+  paidAt?: string;
+}
+
+export interface SellerStatus {
+  onboarded: boolean;
+  status?: string;
+  payoutsEnabled?: boolean;
+  country?: string;
+  demo?: boolean;
+}
+
+export const stripeApi = {
+  /** Create a Stripe Checkout session for a paid skill */
+  createCheckout(skillId: string, successUrl?: string, cancelUrl?: string): Promise<StripeCheckoutResponse> {
+    return api.post("/stripe/checkout", { skillId, successUrl, cancelUrl });
+  },
+
+  /** Confirm a demo-mode payment (no real Stripe key needed) */
+  confirmDemo(paymentSessionId: string): Promise<{ success: boolean; purchaseId: string; skillId: string }> {
+    return api.post("/stripe/confirm-demo", { paymentSessionId });
+  },
+
+  /** Check if current company already purchased a skill */
+  checkPurchase(skillId: string): Promise<{ purchased: boolean; purchaseId: string | null }> {
+    return api.get(`/stripe/purchases/check/${skillId}`);
+  },
+
+  /** List all purchases for current company */
+  listPurchases(): Promise<StripePurchase[]> {
+    return api.get("/stripe/purchases");
+  },
+
+  /** List all sales (as seller) for current company */
+  listSales(): Promise<StripeSale[]> {
+    return api.get("/stripe/sales");
+  },
+
+  /** Get seller account status */
+  getSellerStatus(): Promise<SellerStatus> {
+    return api.get("/stripe/seller/status");
+  },
+
+  /** Onboard as a seller with Stripe Connect */
+  onboardSeller(country = "US", returnUrl?: string): Promise<{ accountId: string; onboardingUrl?: string; status: string; demo?: boolean }> {
+    return api.post("/stripe/seller/onboard", { country, return_url: returnUrl });
+  },
+};

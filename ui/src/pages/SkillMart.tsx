@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   skillMartApi,
+  stripeApi,
   type SkillMartSkill,
   type SkillMartReview,
   type SkillMartTag,
@@ -27,6 +28,10 @@ import {
   Edit2,
   MessageSquare,
   StarHalf,
+  CreditCard,
+  ShoppingCart,
+  CheckCircle,
+  AlertCircle,
 } from "lucide-react";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -307,15 +312,127 @@ interface ReviewDialogProps {
   );
 }
 
+// ── Payment Modal ─────────────────────────────────────────────────────────────
+
+interface PaymentModalProps {
+  open: boolean;
+  skill: SkillMartSkill;
+  onClose: () => void;
+  onPurchased: () => void;
+}
+
+function PaymentModal({ open, skill, onClose, onPurchased }: PaymentModalProps) {
+  const { pushToast } = useToast();
+  const queryClient = useQueryClient();
+  const sym = CURRENCY_SYMBOLS[skill.priceCurrency] ?? "$";
+  const price = Number(skill.price) || 0;
+  const platformFee = Math.round(price * 0.15 * 100) / 100;
+  const sellerAmount = Math.round((price - platformFee) * 100) / 100;
+
+  const checkout = useMutation({
+    mutationFn: () => stripeApi.createCheckout(skill.id),
+    onSuccess: async (data) => {
+      if (data.alreadyPurchased) {
+        pushToast({ title: "已购买此技能，无需重复购买！" });
+        onPurchased();
+        onClose();
+        return;
+      }
+      if (data.sessionUrl) {
+        window.location.href = data.sessionUrl;
+      } else {
+        // Demo mode — confirm payment
+        const confirmed = await stripeApi.confirmDemo(data.paymentSessionId);
+        if (confirmed.success) {
+          pushToast({ title: `购买成功！${sym}${price} 已支付` });
+          onPurchased();
+          onClose();
+        }
+      }
+    },
+    onError: (err: Error) => pushToast({ title: err.message || "支付失败" }),
+  });
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="w-full max-w-sm rounded-xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <div className="flex items-center gap-2">
+            <CreditCard className="h-4 w-4 text-purple-600" />
+            <h2 className="text-base font-semibold">购买技能</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          {/* Skill info */}
+          <div className="flex items-center gap-3 rounded-lg bg-gray-50 p-3">
+            <div className="flex-1">
+              <p className="text-sm font-semibold">{skill.name}</p>
+              <p className="mt-0.5 text-xs text-gray-500">v{skill.version} · {skill.companyName ?? "匿名发布者"}</p>
+            </div>
+            <span className="text-lg font-bold text-purple-700">{sym}{price}</span>
+          </div>
+
+          {/* Payment breakdown */}
+          <div className="space-y-2 rounded-lg border p-3 text-xs">
+            <div className="flex justify-between">
+              <span className="text-gray-500">商品金额</span>
+              <span>{sym}{price.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-green-600">
+              <span>平台服务费（15%）</span>
+              <span>-{sym}{platformFee.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between border-t pt-2 font-semibold">
+              <span>实付金额</span>
+              <span className="text-purple-700">{sym}{price.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-gray-400">
+              <span>开发者实收</span>
+              <span>{sym}{sellerAmount.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Demo mode notice */}
+          <div className="flex items-start gap-2 rounded-lg bg-blue-50 p-3 text-xs text-blue-700">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>演示模式：无需真实 Stripe 密钥，点击"立即购买"即可模拟支付完成。</span>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <Button variant="outline" className="flex-1" onClick={onClose}>
+              取消
+            </Button>
+            <Button
+              className="flex-1 bg-purple-600 hover:bg-purple-700"
+              disabled={checkout.isPending}
+              onClick={() => checkout.mutate()}
+            >
+              <ShoppingCart className="mr-1 h-3.5 w-3.5" />
+              {checkout.isPending ? "处理中..." : `立即购买 ${sym}${price}`}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Skill Detail Panel ─────────────────────────────────────────────────────────
 
 interface SkillDetailPanelProps {
   skill: SkillMartSkill;
   onClose: () => void;
   onReview: () => void;
+  onPurchase: () => void;
+  hasPurchased: boolean;
 }
 
-function SkillDetailPanel({ skill, onClose, onReview }: SkillDetailPanelProps) {
+function SkillDetailPanel({ skill, onClose, onReview, onPurchase, hasPurchased }: SkillDetailPanelProps) {
   const { data: reviews } = useQuery({
     queryKey: ["skill-mart-reviews", skill.id],
     queryFn: () => skillMartApi.getReviews(skill.id),
@@ -381,14 +498,30 @@ function SkillDetailPanel({ skill, onClose, onReview }: SkillDetailPanelProps) {
         )}
 
         <div className="flex gap-2">
-          <Button
-            size="sm"
-            onClick={() => download.mutate()}
-            disabled={download.isPending}
-          >
-            <Download className="mr-1 h-3 w-3" />
-            {download.isPending ? "记录中..." : "下载使用"}
-          </Button>
+          {skill.isPaid && !hasPurchased ? (
+            <Button size="sm" className="bg-purple-600 hover:bg-purple-700" onClick={onPurchase}>
+              <CreditCard className="mr-1 h-3 w-3" />
+              购买 {sym}{skill.price}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={() => download.mutate()}
+              disabled={download.isPending}
+            >
+              {hasPurchased && skill.isPaid ? (
+                <>
+                  <CheckCircle className="mr-1 h-3 w-3" />
+                  已购买 · 下载
+                </>
+              ) : (
+                <>
+                  <Download className="mr-1 h-3 w-3" />
+                  {download.isPending ? "记录中..." : "下载使用"}
+                </>
+              )}
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={onReview}>
             <MessageSquare className="mr-1 h-3 w-3" />
             评价
@@ -435,6 +568,8 @@ export function SkillMart() {
   const [selectedSkill, setSelectedSkill] = useState<SkillMartSkill | null>(null);
   const [showPublish, setShowPublish] = useState(false);
   const [showReview, setShowReview] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
+  const [purchasedSkillIds, setPurchasedSkillIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -460,6 +595,15 @@ export function SkillMart() {
     queryKey: ["skill-mart-my"],
     queryFn: skillMartApi.getMySkills,
   });
+
+  const { data: purchases } = useQuery({
+    queryKey: ["stripe-purchases"],
+    queryFn: stripeApi.listPurchases,
+  });
+
+  // Sync purchased skill IDs
+  const purchasedSet = new Set(purchases?.map((p) => p.skillId) ?? []);
+  const hasPurchased = selectedSkill ? purchasedSet.has(selectedSkill.id) : false;
 
   return (
     <div className="flex h-full flex-col">
@@ -615,6 +759,8 @@ export function SkillMart() {
               skill={selectedSkill}
               onClose={() => setSelectedSkill(null)}
               onReview={() => setShowReview(true)}
+              onPurchase={() => setShowPayment(true)}
+              hasPurchased={hasPurchased}
             />
           </div>
         )}
@@ -637,6 +783,24 @@ export function SkillMart() {
         </div>
       )}
 
+      {/* My Purchases Section */}
+      {purchases && purchases.length > 0 && (
+        <div className="flex-shrink-0 border-t bg-white px-6 py-3">
+          <h3 className="mb-2 text-xs font-semibold uppercase text-gray-400">我购买的技能</h3>
+          <div className="flex flex-wrap gap-2">
+            {purchases.map((p) => (
+              <span
+                key={p.id}
+                className="flex items-center gap-1 rounded-full bg-green-50 px-3 py-1 text-xs text-green-700"
+              >
+                <CheckCircle className="h-3 w-3" />
+                {p.skillName ?? "未知技能"} · {CURRENCY_SYMBOLS[p.currency] ?? "$"}{Number(p.amount).toFixed(2)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Dialogs */}
       <PublishDialog
         open={showPublish}
@@ -651,6 +815,16 @@ export function SkillMart() {
         skill={selectedSkill}
         onClose={() => setShowReview(false)}
       />
+      {selectedSkill && (
+        <PaymentModal
+          open={showPayment}
+          skill={selectedSkill}
+          onClose={() => setShowPayment(false)}
+          onPurchased={() => {
+            queryClient.invalidateQueries({ queryKey: ["stripe-purchases"] });
+          }}
+        />
+      )}
     </div>
   );
 }
