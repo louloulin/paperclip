@@ -22,3 +22,5 @@ export { complianceReportRoutes } from "./compliance-reports.js";
 export { ssoRoutes } from "./sso.js";
 export { departmentRoutes } from "./departments.js";
 export { demoLeadRoutes } from "./demo-leads.js";
+export { skillMartRoutes } from "./skill-mart.js";
+export { stripePaymentRoutes } from "./stripe-payments.js";

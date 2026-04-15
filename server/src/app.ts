@@ -33,6 +33,8 @@ import { complianceReportRoutes } from "./routes/compliance-reports.js";
 import { ssoRoutes } from "./routes/sso.js";
 import { departmentRoutes } from "./routes/departments.js";
 import { demoLeadRoutes } from "./routes/demo-leads.js";
+import { skillMartRoutes } from "./routes/skill-mart.js";
+import { stripePaymentRoutes } from "./routes/stripe-payments.js";
 import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
@@ -183,6 +185,8 @@ export async function createApp(
   api.use(ssoRoutes(db));
   api.use(departmentRoutes(db));
   api.use(demoLeadRoutes(db));
+  api.use(skillMartRoutes(db));
+  api.use(stripePaymentRoutes(db));
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);
