@@ -66,3 +66,10 @@ export { waves, waveEvents } from "./waves.js";
 export { ssoConfigs, ssoSessions, ssoAuditLog } from "./sso.js";
 export { demoLeads, demoRequests, demoCompanies } from "./demo-leads.js";
 export { departments, departmentRoles, departmentMemberships } from "./departments.js";
+export { skillMartSkills, skillMartReviews, skillMartDownloads } from "./skill-mart.js";
+export {
+  stripePaymentSessions,
+  skillMartPurchases,
+  stripeConnectAccounts,
+  stripePayoutSummaries,
+} from "./stripe-payments.js";

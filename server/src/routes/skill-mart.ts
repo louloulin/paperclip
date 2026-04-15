@@ -6,6 +6,7 @@ import {
   skillMartSkills,
   skillMartReviews,
   skillMartDownloads,
+  skillMartPurchases,
   companies,
 } from "@paperclipai/db";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
