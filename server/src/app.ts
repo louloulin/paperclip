@@ -38,6 +38,7 @@ import { stripePaymentRoutes } from "./routes/stripe-payments.js";
 import { companyTemplateRoutes } from "./routes/company-templates.js";
 import { agentCollaborationRoutes } from "./routes/agent-collaboration.js";
 import { webhookRoutes } from "./routes/webhooks.js";
+import { apiDocsRoutes } from "./routes/api-docs.js";
 import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
@@ -193,6 +194,7 @@ export async function createApp(
   api.use(companyTemplateRoutes(db));
   api.use(agentCollaborationRoutes(db));
   api.use(webhookRoutes(db));
+  api.use("/api-docs", apiDocsRoutes());
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);
