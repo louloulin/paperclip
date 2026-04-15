@@ -24,3 +24,4 @@ export { departmentRoutes } from "./departments.js";
 export { demoLeadRoutes } from "./demo-leads.js";
 export { skillMartRoutes } from "./skill-mart.js";
 export { stripePaymentRoutes } from "./stripe-payments.js";
+export { companyTemplateRoutes } from "./company-templates.js";

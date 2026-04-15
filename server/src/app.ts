@@ -35,6 +35,7 @@ import { departmentRoutes } from "./routes/departments.js";
 import { demoLeadRoutes } from "./routes/demo-leads.js";
 import { skillMartRoutes } from "./routes/skill-mart.js";
 import { stripePaymentRoutes } from "./routes/stripe-payments.js";
+import { companyTemplateRoutes } from "./routes/company-templates.js";
 import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
@@ -187,6 +188,7 @@ export async function createApp(
   api.use(demoLeadRoutes(db));
   api.use(skillMartRoutes(db));
   api.use(stripePaymentRoutes(db));
+  api.use(companyTemplateRoutes(db));
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);

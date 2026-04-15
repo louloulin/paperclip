@@ -28,6 +28,7 @@ import { SsoSettings } from "./pages/SsoSettings";
 import { Departments } from "./pages/Departments";
 import { DemoLeads } from "./pages/DemoLeads";
 import { SkillMart } from "./pages/SkillMart";
+import { CompanyTemplates } from "./pages/CompanyTemplates";
 import { Waves } from "./pages/Waves";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
@@ -183,6 +184,7 @@ function boardRoutes() {
       <Route path="departments" element={<Departments />} />
       <Route path="demo-leads" element={<DemoLeads />} />
       <Route path="skill-mart" element={<SkillMart />} />
+      <Route path="templates" element={<CompanyTemplates />} />
       <Route path="inbox" element={<InboxRootRedirect />} />
       <Route path="inbox/mine" element={<Inbox />} />
       <Route path="inbox/recent" element={<Inbox />} />

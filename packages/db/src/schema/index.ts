@@ -73,3 +73,8 @@ export {
   stripeConnectAccounts,
   stripePayoutSummaries,
 } from "./stripe-payments.js";
+export {
+  companyTemplates,
+  companyTemplateReviews,
+  companyTemplateInstalls,
+} from "./company-templates.js";
