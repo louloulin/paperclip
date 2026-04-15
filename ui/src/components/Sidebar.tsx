@@ -22,6 +22,7 @@ import {
   Webhook,
   BookOpen,
   Puzzle,
+  Award,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -133,6 +134,7 @@ export function Sidebar() {
           <SidebarNavItem to="/collaboration" label="Collaboration" icon={GitBranch} />
           <SidebarNavItem to="/webhooks" label="Webhooks" icon={Webhook} />
           <SidebarNavItem to="/adapter-marketplace" label="Adapters" icon={Puzzle} />
+          <SidebarNavItem to="/developer-earnings" label="Earnings" icon={Award} />
           <SidebarNavItem to="/api-docs" label="API Docs" icon={BookOpen} />
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
         </SidebarSection>

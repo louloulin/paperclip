@@ -233,7 +233,7 @@ function TemplateDetailPanel({
 }
 
 export function CompanyTemplates() {
-  const { company } = useCompany();
+  const { selectedCompany: company } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -271,12 +271,12 @@ export function CompanyTemplates() {
     mutationFn: (templateId: string) => companyTemplatesApi.install(templateId),
     onMutate: (id) => setInstallingId(id),
     onSuccess: () => {
-      toast.toast({ title: "Template installed successfully" });
+      toast.pushToast({ title: "Template installed successfully" });
       queryClient.invalidateQueries({ queryKey: ["template-installs"] });
       setSelectedTemplate(null);
     },
     onError: (err: Error) => {
-      toast.toast({ title: "Install failed", description: err.message, variant: "destructive" });
+      toast.pushToast({ title: "Install failed", body: err.message, tone: "error" });
     },
     onSettled: () => setInstallingId(null),
   });
@@ -340,9 +340,8 @@ export function CompanyTemplates() {
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {!templates || templates.length === 0 ? (
           <EmptyState
-            icon={<LayoutGrid className="h-8 w-8" />}
-            title="No templates found"
-            description="Try adjusting your search or filters"
+            icon={<LayoutGrid className="h-10 w-10 text-muted-foreground/50" />}
+            message="No templates found"
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

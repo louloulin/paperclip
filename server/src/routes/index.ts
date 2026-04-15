@@ -29,3 +29,4 @@ export { agentCollaborationRoutes } from "./agent-collaboration.js";
 export { webhookRoutes } from "./webhooks.js";
 export { apiDocsRoutes } from "./api-docs.js";
 export { adapterMarketplaceRoutes } from "./adapter-marketplace.js";
+export { developerIncentiveRoutes } from "./developer-incentive.js";

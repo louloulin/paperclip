@@ -46,6 +46,7 @@ import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { AdapterManager } from "./pages/AdapterManager";
 import { AdapterMarketplace } from "./pages/AdapterMarketplace";
+import { DeveloperEarnings } from "./pages/DeveloperEarnings";
 import { PluginPage } from "./pages/PluginPage";
 import { IssueChatUxLab } from "./pages/IssueChatUxLab";
 import { RunTranscriptUxLab } from "./pages/RunTranscriptUxLab";
@@ -193,6 +194,7 @@ function boardRoutes() {
       <Route path="webhooks" element={<Webhooks />} />
       <Route path="api-docs" element={<ApiDocs />} />
       <Route path="adapter-marketplace" element={<AdapterMarketplace />} />
+      <Route path="developer-earnings" element={<DeveloperEarnings />} />
       <Route path="inbox" element={<InboxRootRedirect />} />
       <Route path="inbox/mine" element={<Inbox />} />
       <Route path="inbox/recent" element={<Inbox />} />
