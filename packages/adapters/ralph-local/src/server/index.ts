@@ -663,9 +663,10 @@ export class RalphAdapterServer implements ServerAdapterModule {
     const workingDir =
       (sessionParams.workingDir as string) ||
       (config.workingDirectory as string) ||
+      (ctx.context?.paperclipWorkspace as Record<string, unknown>)?.cwd as string ||
       this.workingDirectory;
     const hatCollection =
-      (sessionParams.hatCollection as string) || (config.hatCollection as string) || "default";
+      (sessionParams.hatCollection as string) || (config.hatCollection as string) || "";
     const defaultHat =
       (sessionParams.defaultHat as string) || (config.defaultHat as string) || undefined;
     const maxLoops =
@@ -703,9 +704,46 @@ export class RalphAdapterServer implements ServerAdapterModule {
     }
 
     // Add the task prompt from context
-    const task = this.extractTaskFromContext(ctx);
+    let task = this.extractTaskFromContext(ctx);
+
+    // If no prompt from context, try to fetch issue description from Paperclip
+    if (!task && ctx.context?.issueId) {
+      const issueId = String(ctx.context.issueId);
+      const companyId = ctx.agent.companyId || "";
+      if (companyId && process.env.PAPERCLIP_API_KEY) {
+        const issueDescription = await this.fetchIssueDescription(issueId, companyId);
+        if (issueDescription) {
+          task = issueDescription;
+          await ctx.onLog("stdout", `[ralph-local] Using issue description as prompt (issueId: ${issueId})\n`);
+        }
+      }
+    }
+
+    // If still no prompt, try to read PROMPT.md from the workspace directory
+    if (!task) {
+      const promptFromFile = await this.readPromptFile(workingDir);
+      if (promptFromFile) {
+        task = promptFromFile;
+        await ctx.onLog("stdout", `[ralph-local] Using PROMPT.md from workspace\n`);
+      }
+    }
+
+    // Write prompt to temp file to avoid shell escaping issues
+    let promptFilePath: string | null = null;
     if (task) {
-      ralphArgs.push("--prompt", task);
+      try {
+        const { writeFile, mkdir } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const { tmpdir } = await import("node:os");
+        const promptDir = join(tmpdir(), "ralph-prompts");
+        await mkdir(promptDir, { recursive: true });
+        promptFilePath = join(promptDir, `prompt-${ctx.runId}.md`);
+        await writeFile(promptFilePath, task, "utf-8");
+        ralphArgs.push("--prompt-file", promptFilePath);
+      } catch {
+        // Fallback to inline prompt (may have escaping issues)
+        ralphArgs.push("--prompt", task);
+      }
     }
 
     if (this.debug) {
@@ -957,6 +995,48 @@ export class RalphAdapterServer implements ServerAdapterModule {
       };
     } catch {
       // Scratchpad doesn't exist yet - this is normal for first run
+      return null;
+    }
+  }
+
+  /**
+   * Read PROMPT.md file from workspace directory
+   * Used as fallback when no prompt is provided in context
+   */
+  private async readPromptFile(workingDir: string): Promise<string | null> {
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const promptPath = join(workingDir, "PROMPT.md");
+      const content = await readFile(promptPath, "utf-8");
+      return content.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Fetch issue description from Paperclip API
+   * Used when no prompt is provided in context but an issueId is available
+   */
+  private async fetchIssueDescription(issueId: string, companyId: string): Promise<string | null> {
+    const apiUrl =
+      process.env.PAPERCLIP_API_URL ||
+      `${process.env.PAPERCLIP_SERVER_URL || "http://localhost:3000"}/api`;
+    const apiKey = process.env.PAPERCLIP_API_KEY;
+    if (!apiKey) return null;
+
+    try {
+      const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/issues/${encodeURIComponent(issueId)}`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) return null;
+      const issue = await response.json() as { description?: string | null; title?: string | null; body?: string | null };
+      return issue.description || issue.body || issue.title || null;
+    } catch {
       return null;
     }
   }
