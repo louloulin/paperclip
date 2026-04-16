@@ -695,11 +695,7 @@ export class RalphAdapterServer implements ServerAdapterModule {
     const ralphArgs: string[] = ["run"];
 
     if (hatCollection) {
-      ralphArgs.push("--hat", hatCollection);
-    }
-
-    if (defaultHat) {
-      ralphArgs.push("--hat", defaultHat);
+      ralphArgs.push("--hats", hatCollection);
     }
 
     if (maxLoops) {
