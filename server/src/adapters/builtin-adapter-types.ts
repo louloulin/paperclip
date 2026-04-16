@@ -10,6 +10,7 @@ export const BUILTIN_ADAPTER_TYPES = new Set([
   "opencode_local",
   "pi_local",
   "hermes_local",
+  "ralph_local", // T3.11: Ralph Orchestrator - multi-hat orchestration engine
   "process",
   "http",
 ]);
