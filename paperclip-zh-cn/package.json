@@ -1,0 +1,47 @@
+{
+  "name": "@paperclip-zh-cn/plugin-zh-cn",
+  "version": "1.0.0",
+  "description": "Standalone Paperclip plugin that dynamically localizes the whole web app to Simplified Chinese, with one-command install and rollback",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "paperclip-zh": "./bin/paperclip-zh.mjs"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js",
+    "ui": "./dist/ui/"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "scripts",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "preinstall-check": "node scripts/check-install-contract.mjs",
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check-install-contract.mjs && node scripts/build.mjs && node --test \"tests/*.test.mjs\"",
+    "verify": "node scripts/verify-install.mjs",
+    "extract": "node scripts/extract-strings.mjs",
+    "install-plugin": "node bin/paperclip-zh.mjs install",
+    "rollback": "node bin/paperclip-zh.mjs rollback",
+    "uninstall-plugin": "node bin/paperclip-zh.mjs uninstall",
+    "verify-install": "node bin/paperclip-zh.mjs verify"
+  },
+  "keywords": [
+    "paperclip",
+    "plugin",
+    "i18n",
+    "zh-cn",
+    "chinese"
+  ],
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.916.1"
+  }
+}
