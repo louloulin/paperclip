@@ -1,20 +1,27 @@
 # paperclip-zh-cn — Paperclip 汉化插件（独立项目）
 
-把 Paperclip 整个 Web 界面**动态**翻译成简体中文的独立插件项目。零依赖、零构建（源码即产物），
-一条命令安装、一条命令回滚。
+把 Paperclip 整个 Web 界面**动态**翻译成简体中文的独立插件项目。UI 侧零依赖零构建（源码即产物），
+一条命令安装、一条命令回滚。worker 侧只依赖宿主 SDK `@paperclipai/plugin-sdk`（安装时自动 `npm install`）。
 
 - **独立项目**：不进入 Paperclip 主仓库的 pnpm workspace，不修改宿主任何一行代码。
 - **动态汉化**：运行时遍历 DOM 翻译文本节点与 `placeholder` / `title` / `aria-label` / `alt`，
   `MutationObserver` + 定时兜底扫描覆盖后渲染的内容（软导航、弹窗、流式输出）。
 - **可回滚**：每处替换都记录原文，`stop()` / 卸载 / 组件卸载时逐字还原页面，回滚是「零残留」而不是「刷新」。
 - **无构建**：`src/` 即 ESM 产物，`node scripts/build.mjs` 只做拷贝 + 清单校验，可在离线实例上安装。
+- **真实可安装**：`scripts/check-install-contract.mjs` 复刻宿主 `plugin-loader` / `plugin-worker-manager`
+  的安装期要求（入口存在、worker 裸导入可解析、UI 入口为 `<dir>/index.js`、UI 只含宿主可重写的裸导入、
+  worker 能在最小环境下 `fork` 起来）。真实安装验证中发现的阻塞点（worker 首次 `fork` 即
+  `ERR_MODULE_NOT_FOUND`）已由该检查固化为回归门。
 
 ## 安装
 
 ```bash
 cd paperclip-zh-cn
-node bin/paperclip-zh.mjs install        # 构建 → 快照当前状态 → paperclipai plugin install/enable
+node bin/paperclip-zh.mjs install        # 依赖安装 + 契约检查 + 构建 → 快照状态 → paperclipai plugin install/enable
 ```
+
+> `paperclipai plugin install` 需要**看板账号且具备实例管理员权限**（宿主对 `/api/plugins/install`
+> 的硬性要求，智能体令牌一律 403）。未登录时先执行 `paperclipai auth login`。
 
 安装后刷新浏览器标签页，右下角出现 `中/EN` 开关。默认 `auto`：浏览器首选语言为 `zh-*` 时自动汉化。
 
@@ -72,6 +79,7 @@ src/ui/runtime.js          DOM 运行时：扫描 / 观察 / 还原
 src/ui/index.js            appShellOverlay 组件：中/EN 开关 + 生命周期
 bin/paperclip-zh.mjs       install / rollback / uninstall / status
 scripts/build.mjs          拷贝 + 清单校验（无打包器）
+scripts/check-install-contract.mjs  宿主安装期契约检查（含真实 fork 冒烟）
 scripts/extract-strings.mjs  从 ui/src 抽取界面字符串
 ```
 

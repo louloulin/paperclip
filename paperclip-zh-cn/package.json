@@ -21,8 +21,9 @@
     "README.md"
   ],
   "scripts": {
+    "preinstall-check": "node scripts/check-install-contract.mjs",
     "build": "node scripts/build.mjs",
-    "check": "node scripts/build.mjs && node --test tests/",
+    "check": "node scripts/check-install-contract.mjs && node scripts/build.mjs && node --test \"tests/*.test.mjs\"",
     "extract": "node scripts/extract-strings.mjs",
     "install-plugin": "node bin/paperclip-zh.mjs install",
     "rollback": "node bin/paperclip-zh.mjs rollback",
@@ -37,5 +38,8 @@
   ],
   "engines": {
     "node": ">=24.11.0"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.916.1"
   }
 }

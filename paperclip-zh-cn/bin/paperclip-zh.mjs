@@ -19,7 +19,7 @@
  *   paperclip-zh status
  */
 import { spawnSync } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -83,8 +83,17 @@ async function backupState(label) {
 }
 
 async function build() {
-  const result = spawnSync(process.execPath, [path.join(packageRoot, "scripts", "build.mjs")], { stdio: "inherit" });
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  // The host forks the worker with a minimal environment, so every dependency
+  // must already be on disk here. Install them before the contract check.
+  if (!existsSync(path.join(packageRoot, "node_modules", "@paperclipai", "plugin-sdk"))) {
+    console.log("› installing plugin dependencies (@paperclipai/plugin-sdk)");
+    const install = spawnSync("npm", ["install", "--no-audit", "--no-fund"], { cwd: packageRoot, stdio: "inherit" });
+    if (install.status !== 0) process.exit(install.status ?? 1);
+  }
+  for (const script of ["scripts/check-install-contract.mjs", "scripts/build.mjs"]) {
+    const result = spawnSync(process.execPath, [path.join(packageRoot, script)], { stdio: "inherit" });
+    if (result.status !== 0) process.exit(result.status ?? 1);
+  }
 }
 
 async function install({ yes }) {
