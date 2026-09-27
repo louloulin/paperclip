@@ -12,6 +12,10 @@
   的安装期要求（入口存在、worker 裸导入可解析、UI 入口为 `<dir>/index.js`、UI 只含宿主可重写的裸导入、
   worker 能在最小环境下 `fork` 起来）。真实安装验证中发现的阻塞点（worker 首次 `fork` 即
   `ERR_MODULE_NOT_FOUND`）已由该检查固化为回归门。
+- **真实验证**：`scripts/verify-install.mjs` 对着**运行中的 Paperclip 实例**跑完整条链路
+  （install → enable → UI 贡献 → 宿主实际下发的 UI 产物真的能翻译页面 → 宿主 fork 出来的 worker
+  真的应答 bridge → 状态写入落库 → disable 回滚 → enable 复原）。任一步失败即非零退出，
+  没有实例时必定报红而不是「跳过」。
 
 ## 安装
 
@@ -20,10 +24,50 @@ cd paperclip-zh-cn
 node bin/paperclip-zh.mjs install        # 依赖安装 + 契约检查 + 构建 → 快照状态 → paperclipai plugin install/enable
 ```
 
+### 真实验证（对运行中的实例）
+
+```bash
+node bin/paperclip-zh.mjs verify --api-url http://localhost:3100 [--token <board token>] [--json report.json]
+```
+
+`verify` 不经过 `paperclipai` CLI，直接打宿主 HTTP API，因此验的是宿主行为而不是 CLI 封装：
+
+| 步骤 | 断言 |
+| --- | --- |
+| `target` | `GET /api/health` 有应答（端口不通 = 红，不存在「静默通过」） |
+| `install` | `POST /api/plugins/install`（本地路径）拿到插件 id |
+| `enable` | `POST /api/plugins/:id/enable` 后状态为 `ready` |
+| `registry` | `GET /api/plugins/:id/health` 四项检查全过 |
+| `contribution` | `GET /api/plugins/ui-contributions` 里能查到 `zh-cn-locale-overlay` 槽位 |
+| `ui-bundle` | `GET /_plugins/:id/ui/*.js` 下发的就是本项目产物 |
+| `ui-runtime` | 用**宿主下发的字节**跑真实 DOM：Dashboard/Settings/Save/More actions/Search tasks 均变中文，`stop()` 逐字还原 |
+| `worker-rpc` | `POST /api/plugins/:id/bridge/data` → 宿主 fork 的 worker 真应答（locale=zh-CN + 词典条数） |
+| `worker-state` | `bridge/action` 写入语言偏好并能读回（state 真的落到实例） |
+| `rollback` | `disable` 后 UI 贡献从宿主列表消失（回滚是真的停供） |
+| `resume` | 再次 `enable` 回到 `ready`，偏好保留 |
+| `uninstall` | `--uninstall` 时执行 `DELETE /api/plugins/:id` |
+
+用法：`authenticated` 部署的实例需 `--token`（board token）；`local_trusted` 本机实例免令牌。
+`--json <file>` 写出逐步骤日志供 CI / 审计。
+
 > `paperclipai plugin install` 需要**看板账号且具备实例管理员权限**（宿主对 `/api/plugins/install`
 > 的硬性要求，智能体令牌一律 403）。未登录时先执行 `paperclipai auth login`。
 
-安装后刷新浏览器标签页，右下角出现 `中/EN` 开关。默认 `auto`：浏览器首选语言为 `zh-*` 时自动汉化。
+安装后刷新浏览器标签页，右下角出现 `中/EN` 开关。
+
+**一条命令完成「安装 + 真实验证」**（推荐，需要看板会话）：
+
+```bash
+paperclipai auth login --api-base http://localhost:3100   # 只需一次
+node bin/paperclip-zh.mjs verify --api-url http://localhost:3100 \
+  --json .state/verify-$(date +%s).json
+```
+
+`verify` 会依次断言：实例可达 → **看板权限预检** → 真实 `POST /api/plugins/install` → enable →
+宿主健康检查 → UI 贡献登记 → **宿主实际下发的 UI bundle 能把真实界面字符串翻成中文** → 该 bundle 的
+`stop()` 能逐字还原 → 真实 fork 出来的 worker 通过 `/bridge/data` 应答 → `/bridge/action` 的状态写入
+可读回 → **disable 后 UI 贡献消失（真回滚）** → 再次 enable 状态保留。任一步失败立即非零退出，
+加 `--uninstall` 会在最后卸载。加 `--token <board token>` 可跳过登录。默认 `auto`：浏览器首选语言为 `zh-*` 时自动汉化。
 
 也可以手动走宿主 CLI（等价）：
 
@@ -77,9 +121,11 @@ src/i18n/dictionary.zh-cn.js  347 条汉化词条
 src/i18n/translate.js      纯函数翻译引擎（无 DOM，可单测）
 src/ui/runtime.js          DOM 运行时：扫描 / 观察 / 还原
 src/ui/index.js            appShellOverlay 组件：中/EN 开关 + 生命周期
-bin/paperclip-zh.mjs       install / rollback / uninstall / status
+bin/paperclip-zh.mjs       install / rollback / uninstall / status / verify
 scripts/build.mjs          拷贝 + 清单校验（无打包器）
 scripts/check-install-contract.mjs  宿主安装期契约检查（含真实 fork 冒烟）
+scripts/verify-install.mjs          对真实实例的端到端安装验证（安装→健康→UI 贡献→bundle 实译→bridge→回滚→恢复）
+scripts/verify-install.mjs  对运行中实例的真实安装验证（12 步）
 scripts/extract-strings.mjs  从 ui/src 抽取界面字符串
 ```
 
@@ -90,5 +136,6 @@ scripts/extract-strings.mjs  从 ui/src 抽取界面字符串
 
 ```bash
 node scripts/build.mjs                    # 清单结构 + UI 导出 + 词典规模校验
-node --test "tests/*.test.mjs"             # 25 个用例：翻译引擎、运行时、还原保证、清单与宿主目录一致性
+node --test "tests/*.test.mjs"             # 28 个用例：翻译引擎、运行时、还原保证、清单与宿主目录一致性、验证器自身不会假绿
+node bin/paperclip-zh.mjs verify           # 真实例 12 步安装验证（需一个运行中的 Paperclip）
 ```

@@ -17,6 +17,7 @@
  *   paperclip-zh rollback [--to <version>] [--yes]
  *   paperclip-zh uninstall [--force] [--yes]
  *   paperclip-zh status
+ *   paperclip-zh verify [--api-url <url>] [--token <board token>] [--uninstall]
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
@@ -28,11 +29,26 @@ const stateDir = path.join(packageRoot, ".state");
 const PLUGIN_KEY = "paperclip.zh-cn";
 
 function parseArgs(argv) {
-  const args = { _: [], to: null, force: false, yes: false };
+  const args = {
+    _: [],
+    to: null,
+    force: false,
+    yes: false,
+    uninstall: false,
+    apiUrl: process.env.PAPERCLIP_API_URL?.trim() || null,
+    token: process.env.PAPERCLIP_TOKEN?.trim() || null,
+    companyId: process.env.PAPERCLIP_VERIFY_COMPANY_ID?.trim() || null,
+    json: null,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--to") args.to = argv[++i];
     else if (arg === "--force") args.force = true;
+    else if (arg === "--api-url") args.apiUrl = argv[++i];
+    else if (arg === "--token") args.token = argv[++i];
+    else if (arg === "--company") args.companyId = argv[++i];
+    else if (arg === "--json") args.json = argv[++i];
+    else if (arg === "--uninstall") args.uninstall = true;
     else if (arg === "--yes" || arg === "-y") args.yes = true;
     else if (arg === "--help" || arg === "-h") args.help = true;
     else args._.push(arg);
@@ -148,16 +164,37 @@ function status() {
   console.log(output.split("\n").filter((line) => line.includes(PLUGIN_KEY) || line.includes("paperclip")).join("\n"));
 }
 
+/**
+ * Real install verification against a live instance: install → enable →
+ * served UI bundle translates a real page → forked worker answers over the
+ * bridge → rollback → resume. Non-zero exit on the first failed step.
+ */
+async function verify(args) {
+  console.log(`› verifying the real install against ${args.apiUrl ?? "http://localhost:3100"}`);
+  await build();
+  const verifyArgs = [];
+  if (args.apiUrl) verifyArgs.push("--api-url", args.apiUrl);
+  if (args.token) verifyArgs.push("--token", args.token);
+  if (args.companyId) verifyArgs.push("--company", args.companyId);
+  if (args.json) verifyArgs.push("--json", args.json);
+  if (args.uninstall) verifyArgs.push("--uninstall");
+  const result = spawnSync(process.execPath, [path.join(packageRoot, "scripts", "verify-install.mjs"), ...verifyArgs], {
+    stdio: "inherit",
+  });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] ?? "status";
 if (args.help) {
-  console.log("paperclip-zh <install|rollback|uninstall|status> [--to <version>] [--force] [--yes]");
+  console.log("paperclip-zh <install|rollback|uninstall|status|verify> [--to <version>] [--force] [--yes]");
   process.exit(0);
 }
 try {
   if (command === "install") await install(args);
   else if (command === "rollback") await rollback(args);
   else if (command === "uninstall") await uninstall(args);
+  else if (command === "verify") await verify(args);
   else if (command === "status") status();
   else {
     console.error(`✗ unknown command: ${command}`);

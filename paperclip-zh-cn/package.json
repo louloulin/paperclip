@@ -24,10 +24,12 @@
     "preinstall-check": "node scripts/check-install-contract.mjs",
     "build": "node scripts/build.mjs",
     "check": "node scripts/check-install-contract.mjs && node scripts/build.mjs && node --test \"tests/*.test.mjs\"",
+    "verify": "node scripts/verify-install.mjs",
     "extract": "node scripts/extract-strings.mjs",
     "install-plugin": "node bin/paperclip-zh.mjs install",
     "rollback": "node bin/paperclip-zh.mjs rollback",
-    "uninstall-plugin": "node bin/paperclip-zh.mjs uninstall"
+    "uninstall-plugin": "node bin/paperclip-zh.mjs uninstall",
+    "verify-install": "node bin/paperclip-zh.mjs verify"
   },
   "keywords": [
     "paperclip",
