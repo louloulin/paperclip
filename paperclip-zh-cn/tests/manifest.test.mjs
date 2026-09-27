@@ -9,6 +9,33 @@ import { DICTIONARY_ZH_CN } from "../src/i18n/dictionary.zh-cn.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const constantsPath = path.join(packageRoot, "..", "packages", "shared", "src", "constants.ts");
+const validatorPath = path.join(
+  packageRoot,
+  "..",
+  "server",
+  "src",
+  "services",
+  "plugin-capability-validator.ts",
+);
+
+/** Parse a `const NAME = [ ... ] as const;` string list out of host source. */
+function listOf(source, name) {
+  return new Set(
+    (source.split(`${name} = [`)[1]?.split("]")[0] ?? "")
+      .split("\n")
+      .map((line) => line.trim().replace(/^"|",?$/g, ""))
+      .filter(Boolean),
+  );
+}
+
+/** Parse the host's `UI_SLOT_CAPABILITIES` map out of the capability validator. */
+function hostSlotCapabilities() {
+  const source = readFileSync(validatorPath, "utf8");
+  const body = source.split("UI_SLOT_CAPABILITIES: Record<PluginUiSlotType, PluginCapability> = {")[1]?.split("};")[0] ?? "";
+  const map = new Map();
+  for (const [, slot, capability] of body.matchAll(/(\w+):\s*"([\w.]+)"/g)) map.set(slot, capability);
+  return map;
+}
 
 test("manifest satisfies the documented install-time rules", () => {
   assert.match(manifest.id, /^[a-z0-9][a-z0-9._-]*$/);
@@ -50,18 +77,9 @@ test(
   { skip: existsSync(constantsPath) ? false : "not inside a Paperclip checkout" },
   () => {
     const constants = readFileSync(constantsPath, "utf8");
-    const listOf = (name) =>
-      new Set(
-        constants
-          .split(`${name} = [`)[1]
-          ?.split("]")[0]
-          .split("\n")
-          .map((line) => line.trim().replace(/^"|",?$/g, ""))
-          .filter(Boolean) ?? [],
-      );
-    const capabilities = listOf("export const PLUGIN_CAPABILITIES");
-    const categories = listOf("export const PLUGIN_CATEGORIES");
-    const slotTypes = listOf("export const PLUGIN_UI_SLOT_TYPES");
+    const capabilities = listOf(constants, "export const PLUGIN_CAPABILITIES");
+    const categories = listOf(constants, "export const PLUGIN_CATEGORIES");
+    const slotTypes = listOf(constants, "export const PLUGIN_UI_SLOT_TYPES");
     for (const capability of manifest.capabilities) {
       assert.ok(capabilities.has(capability), `unknown capability: ${capability}`);
     }
@@ -70,6 +88,23 @@ test(
     }
     for (const slot of manifest.ui.slots) {
       assert.ok(slotTypes.has(slot.type), `unknown slot type: ${slot.type}`);
+    }
+  },
+);
+
+test(
+  "every declared slot carries the capability the host requires for it",
+  { skip: existsSync(validatorPath) ? false : "not inside a Paperclip checkout" },
+  () => {
+    const required = hostSlotCapabilities();
+    assert.ok(required.size > 0, "parsed the host slot→capability map");
+    for (const slot of manifest.ui.slots) {
+      const capability = required.get(slot.type);
+      assert.ok(capability, `the host has no capability mapping for slot type ${slot.type}`);
+      assert.ok(
+        manifest.capabilities.includes(capability),
+        `slot ${slot.type} requires ${capability}; the manifest does not declare it`,
+      );
     }
   },
 );
