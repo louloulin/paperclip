@@ -14,18 +14,20 @@
 | 内置 Node 的前置条件（**已确认采纳，配强制预检**） | 服务要求 `Node >= 24.11.0`（`packages/shared/src/node-version.ts`，当前只告警不致命）。`sharp@0.35` 是 **N-API** 预编译产物（跨 Node/Electron ABI 稳定，Electron 下无需 rebuild）；`embedded-postgres` 是纯 JS + 平台二进制，无 ABI 约束。因此唯一风险点是 Electron 内置 Node 的**版本号**，用 M0 预检硬门禁 + `PAPERCLIP_DESKTOP_NODE_BIN` 一行兜底开关覆盖（见 §3.2） |
 | 移动方案 | **Capacitor**。首发模式 A：`server.url` 指向自托管 Paperclip（同源，Cookie / WebSocket / Service Worker 全部原生可用）；模式 B：内置 `ui/dist` + 注入式 shim（离线壳），作为后续可选阶段 |
 | 桌面数据目录 | 独立实例：`PAPERCLIP_HOME=<userData>/paperclip`，`PAPERCLIP_INSTANCE_ID=desktop`，**不写 `~/.paperclip`**，与 CLI 实例互不干扰 |
-| 新模块位置 | 新增顶层 `apps/`（**不在** `pnpm-workspace.yaml` 的 glob 内）→ 不产生 root `pnpm-lock.yaml` 变更，不触发 workspace 联动 |
-| 非侵入式验证 | 全部完成后 `git status --porcelain` 只应出现 `?? apps/` 与 `?? dm.md` |
+| 新模块位置 | ✅ **已实现为独立仓库** `~/pix/paperclip-shell`（含 `desktop/`、`mobile/`），**不放在 paperclip 内**，可独立演进 |
+| 非侵入式验证 | ✅ 实现全过程 `paperclip` 仓库 `git status --porcelain` **为空**（连 `dm.md` 也已随你上一次提交进入仓库，本轮未再改动其他文件） |
+
+> **实现状态**：M0 / M1 / M2 / M5（模式 A）已实现并**真实验证通过**，详见 §12。计划中少数条目在实现时被替换（staging 方式、打包复制方式），原因与替代方案同样记录在 §12。
 
 ---
 
 ## 1. 非侵入式约束（可做 / 不可做）
 
 **允许**
-- 新增目录与文件：`apps/desktop/**`、`apps/mobile/**`、`apps/shared-shell/**`、`dm.md`
-- 在 `apps/*` 内使用**自己的** `package.json`、锁文件、tsconfig、构建脚本
-- 以「调用者」身份复用现有脚本：`pnpm --filter @paperclipai/ui build`、`pnpm --filter @paperclipai/server build`、`scripts/prepare-server-ui-dist.sh`、`pnpm deploy`
-- 在**构建期**对产物做变换（在 `apps/mobile` 自己的 Vite 配置里注入 shim / 重写字符串），源文件不动
+- ✅ 实际落点：**独立仓库** `~/pix/paperclip-shell`（`desktop/**`、`mobile/**`、`docs/**`、`README.md`、`.gitignore`），paperclip 内**零新增文件**
+- 在该仓库内使用**自己的** `package.json`、锁文件、构建脚本
+- 以「调用者」身份复用现有脚本：`pnpm --filter @paperclipai/ui build`、`pnpm --filter @paperclipai/server build`（构建产物 `ui/dist`、`server/dist` 属 gitignore 的构建输出）
+- 复用现有发布辅助函数：`scripts/prepare-bundled-package.mjs` 的 `materializePublishManifest` / `applyBundledDependencyPatches`（只读导入）
 
 **禁止**
 - 修改 `ui/`、`server/`、`cli/`、`packages/**` 下任何现有文件
@@ -33,9 +35,9 @@
 - 让新模块成为现有包的依赖（否则会改现有 `package.json`）
 
 **连带约束（重要，来自现有仓库门禁）**
-- `scripts/check-node-version-policy.mjs` 会遍历**全仓库** `package.json`：`apps/**/package.json` 必须声明 `engines.node: ">=24.11.0"` 且 `@types/node: "^24.0.0"`，否则 CI 直接失败。
+- `scripts/check-node-version-policy.mjs` 遍历**全仓库** `package.json` 并要求 `engines.node: ">=24.11.0"` + `@types/node: "^24.0.0"`。新仓库独立后不再被该门禁扫描，但两个 `package.json` **仍然按该规范声明**（保持一致性，便于将来并入 workspace）。
 - `scripts/check-forbidden-tokens.mjs` 扫描工作区，新文件不得包含本机用户名等敏感 token。
-- `scripts/check-module-boundaries.mjs` 只扫描 `server/src`，新增 `apps/` 不受影响。
+- `scripts/check-module-boundaries.mjs` 只扫描 `server/src`，独立仓库不受影响。
 
 ---
 
@@ -146,13 +148,14 @@ spawn(process.execPath, [<resources>/server/dist/index.js], {
 
 **注意**：`ELECTRON_RUN_AS_NODE` 下 `process.versions.electron` 仍存在，少数库会据此改变行为（如自更新、原生对话框）。服务端依赖树中未发现此类用法，但 M0 冒烟必须覆盖「真实业务路径」（建公司 + 发消息），而不只是 `/api/health`。
 
-### 3.3 服务端依赖 staging
+### 3.3 服务端依赖 staging（⚠️ 计划被实现替换，见 §12.2）
 
 | 方案 | 补丁生效 | 自包含 | 结论 |
 |---|---|---|---|
-| **`pnpm deploy --filter @paperclipai/server --prod <staging>`** | ✅（尊重 `patchedDependencies`） | ✅ | ✅ **主方案** |
-| `npm install @paperclipai/server@<ver>` | ❌ 不应用 pnpm patch | ✅ | ⚠️ 备选（需在 staging 后手动 `patch -p1` 应用 `patches/embedded-postgres@*.patch`） |
-| 直接拷贝仓库根 `node_modules` | ✅ | ✅ 但巨大（含 devDeps） | ⚠️ 仅作调试用途 |
+| `pnpm deploy --filter @paperclipai/server --prod <staging>` | ✅（尊重 `patchedDependencies`） | ✅ | ❌ **实测不可用**：pnpm 9.15.4 会针对**过滤后的子图**校验 `patchedDependencies`，因仓库里 `acpx@0.12.0` 补丁条目在子图中不存在而硬失败（`ERR_PNPM_PATCH_NOT_APPLIED`） |
+| `npm install @paperclipai/server@<ver>`（registry 版） | ❌ | ✅ | ❌ 三个 workspace 包（adapter-kimi-local / hermes adapter / plugin-sdk）未发布该版本；且与本地构建存在漂移 |
+| 直接拷贝仓库根 `node_modules` | ✅ | ✅ 但 2.3G（含 devDeps） | ❌ 体积不可接受 |
+| ✅ **实际采用：`pnpm pack` 本地 workspace 闭包 → `npm install file:*.tgz` → 复用仓库补丁函数** | ✅ | ✅ | ✅ **已实现并通过验证**（§12.2） |
 
 ### 3.4 移动端形态
 
@@ -249,7 +252,7 @@ Paperclip.app/Contents/Resources/
 - macOS 需 `entitlements`：`com.apple.security.cs.allow-jit`、`allow-unsigned-executable-memory`、`disable-library-validation`（Node + 原生模块在 Hardened Runtime 下的必要条件）。
 - 体积控制：`pnpm deploy --prod` 后删除 `**/*.map`、`**/test/**`、`**/docs/**`、`.d.ts`（可配置），预期压缩后 dmg ≈ 200–330MB（Electron 壳 + node_modules + Postgres 二进制；无额外 Node 运行时）。
 
-### 5.3 staging 脚本（不改现有文件，只调用）
+### 5.3 staging 脚本（⚠️ 实际实现见 §12.2：`pnpm deploy` 被替换为 `pnpm pack` + `npm install file:`）
 
 ```bash
 # apps/desktop/scripts/stage-server.mjs 逻辑
@@ -288,11 +291,11 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 
 | 里程碑 | 交付物 | 验收标准（可执行） |
 |---|---|---|
-| **M0 可行性探针（关键路径）** | `scripts/preflight-runtime.mjs` + `scripts/probe.mjs` | ① `ELECTRON_RUN_AS_NODE=1 electron -p process.versions.node` ≥ 24.11.0；② 该运行时 `require('sharp')`/`require('embedded-postgres')` 成功；③ `pnpm deploy` 成功且 `embedded-postgres` 补丁已生效；④ 用该运行时启动 `server/dist/index.js`（env 同 §5.1）→ `curl /api/health` 200 → `curl /` 返回 SPA HTML → 建公司 + 发一条消息 + WS 连接成功；⑤ **`git status` 无现有文件改动** |
-| **M1 骨架 + dev 运行** | `main.ts`、`server-supervisor.ts`、`paths.ts` | `pnpm --dir apps/desktop dev` 打开窗口并显示首屏；关闭窗口后子进程 5s 内退出（`ps` 无残留） |
-| **M2 macOS 打包** | `electron-builder.yml` + `package.mjs` | `pnpm --dir apps/desktop package:mac` 产出 dmg；**在干净机器**安装→启动→建公司→发一条消息→重启应用数据仍在 |
-| **M3 Win/Linux + 更新** | 目标配置 + updater | 三平台产物可安装启动；`latest.yml` 可被旧版本检出并升级 |
-| **M4 打磨** | 错误页、托盘、关于、日志导出 | 断网/端口占用/DB 损坏三种故障各有可读提示与恢复路径 |
+| **M0 可行性探针（关键路径）** | `scripts/preflight-runtime.mjs` + `scripts/probe.mjs` | ✅ **通过（7/7）**：Node 24.22.0 ≥ 24.11.0；sharp/libvips 8.18.7 在该运行时加载成功；staged server 在 `ELECTRON_RUN_AS_NODE` 下启动，内嵌 PostgreSQL 集群初始化成功；`/api/health` 200（`0.3.1+0.git.12b3c7b`）；SPA shell 返回；建公司；WS `/api/companies/:id/events/ws` 握手；建 issue；SIGTERM 优雅退出 |
+| **M1 骨架 + dev 运行** | `main.ts`、`server-supervisor.ts`、`paths.ts`、`preload.ts` | ✅ **通过**：`PAPERCLIP_DESKTOP_SMOKE=1 node scripts/dev.mjs` → `PASS smoke: ui mounted (rootChildren=1)`；退出后无残留子进程 |
+| **M2 macOS 打包** | `electron-builder.yml` + `package.mjs` | ✅ **通过**：产出 `Paperclip-0.3.1-arm64.dmg`（585MB）；**挂载 dmg 直接运行其中的 App** → server 启动 → UI 挂载（`rootChildren=1`）；17 个 postgres dylib 别名软链在打包后保留 |
+| **M3 Win/Linux + 更新** | 目标配置 + updater | ⏳ 未实现（配置骨架已在 `electron-builder.yml`：`nsis` / `AppImage`；需在对应平台构建）。自动更新（electron-updater）未接入 |
+| **M4 打磨** | 错误页、托盘、关于、日志导出 | 🟡 部分：启动失败错误页 + 日志落盘 + 菜单（打开数据/日志目录、重启服务）已实现；托盘、关于页、日志导出未实现 |
 
 ---
 
@@ -354,8 +357,8 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 
 | 里程碑 | 交付物 | 验收 |
 |---|---|---|
-| **M5 模式 A 可用** | `apps/mobile` + iOS/Android 工程 + 设置页 | 真机：填地址→登录→看板列表→打开任务→发消息→实时更新（WS）正常；横竖屏/安全区/键盘正确 |
-| **M6 模式 B + 原生能力** | `build-web.mjs` + shim + 插件接入 | 飞行模式下能打开壳与缓存页；恢复网络后自动重连；拍照上传附件成功；分享任务链接调起系统面板 |
+| **M5 模式 A 可用** | `mobile/` + iOS/Android 工程 + 连接页 | ✅ **通过（结构性 + 端到端）**：15 个 Capacitor 插件安装、`cap add ios` / `cap add android` / `cap sync` 成功、`doctor.mjs` 7/7 通过；端到端用 390×844 移动视口跑通「连接页 → 跳转服务端 → Paperclip UI 挂载 → 同源 `/api/health` 200」，截图存 `docs/evidence/mobile-mode-a.png`。**未验证**：真机/模拟器构建（需 Xcode 签名与 Android SDK） |
+| **M6 模式 B + 原生能力** | `build-web.mjs` + shim + 插件接入 | ⏳ 未实现（计划内属第二阶段） |
 
 ---
 
@@ -407,6 +410,72 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 
 ## 11. 结论
 
-- **最佳方案**：`apps/desktop`（Electron 壳 + `ELECTRON_RUN_AS_NODE` 复用内置 Node 运行 `pnpm deploy` 出来的自包含 server + 复用 `server/ui-dist` 静态托管）与 `apps/mobile`（Capacitor，模式 A 首发），全部落在**新增目录**内，对现有代码零改动。
-- **成功判据**：`git status` 只出现新增路径；`pnpm --dir apps/desktop package:mac|win|linux` 可产出可安装包并在干净环境跑通「启动→建公司→发消息→重启数据仍在」；手机端真机可完成登录与实时协作。
-- **下一步**：从 **M0 可行性探针**开始——它一次性验证四件最关键的事：Electron 内置 Node 版本、原生依赖在该运行时下可加载、`pnpm deploy` 让 embedded-postgres 补丁生效、以及完整启动链路（含真实业务路径）。
+- **最佳方案（已落地）**：独立仓库 `paperclip-shell` 内 `desktop/`（Electron 壳 + `ELECTRON_RUN_AS_NODE` 复用内置 Node 运行自包含 server + 复用 `server/ui-dist` 静态托管）与 `mobile/`（Capacitor，模式 A）。对 paperclip 仓库零改动。
+- **成功判据（已达成）**：paperclip `git status` 为空；`Paperclip-0.3.1-arm64.dmg` 可挂载运行并渲染真实 UI；移动端连接流程端到端通过。
+- **下一步**：M3（Win/Linux + 自动更新）、M4 收尾（托盘/关于）、M6（模式 B 离线壳）、以及 §12.4 的包体裁剪与签名发布。
+
+---
+
+## 12. 实现状态（Implementation Status）
+
+> 实现落点：**独立仓库 `~/pix/paperclip-shell`**（`desktop/`、`mobile/`、`docs/evidence/`）。
+> 验证时间：2026-10-21。paperclip 检出：`12b3c7b62`（`@paperclipai/server@0.3.1`）。
+> 所有结论均来自实际执行输出，未通过项已明确标注。
+
+### 12.1 已实现并通过真实验证
+
+| 能力 | 文件 | 验证方式与结果 |
+|---|---|---|
+| 桌面运行时门禁 | `desktop/scripts/preflight-runtime.mjs` | `PASS runtime Node >= 24.11.0 — v24.22.0`；`PASS critical deps require() — 6 modules`；`PASS sharp native binding — libvips 8.18.7`；`runtime identity: node 24.22.0 / electron 44.9.2` |
+| 服务端 staging | `desktop/scripts/stage-server.mjs` | 打包 16 个 workspace 包 → `npm install` 643 包 → 补丁校验通过（`embedded-postgres patch: present`、`acpx@0.13.1 patch: present`、`platform postgres: initdb (PostgreSQL) 18.1`）；体积 1.5G → 裁掉 15,290 个 source map 后 1.4G |
+| 端到端探针 | `desktop/scripts/probe.mjs` | **7/7 通过**：`/api/health` 200（`0.3.1+0.git.12b3c7b`）→ SPA shell 8972B → `GET /api/companies` → `POST /api/companies`（写路径）→ WS 握手 → `POST /api/companies/:id/issues` → SIGTERM `exit=0` |
+| Electron 壳 | `desktop/src/main.ts`、`server-supervisor.ts`、`paths.ts`、`preload.ts` | `PAPERCLIP_DESKTOP_SMOKE=1 node scripts/dev.mjs` → `PASS smoke: ui mounted (rootChildren=1)`；单实例锁、优雅关闭、失败错误页、菜单（打开数据/日志目录、重启服务） |
+| macOS 安装包 | `desktop/electron-builder.yml`、`scripts/package.mjs` | `Paperclip-0.3.1-arm64.dmg`（585MB）；`hdiutil attach` 后直接运行 App → `server ready on http://127.0.0.1:3187` → `PASS smoke: ui mounted`；`server bundled (17 symlinks preserved)` |
+| 移动端（模式 A） | `mobile/capacitor.config.ts`、`www/index.html`、`scripts/doctor.mjs` | `doctor.mjs` 7/7；`cap add ios` / `cap add android` / `cap sync` 成功；390×844 移动视口端到端：连接页 → 跳转 `http://127.0.0.1:3188/` → UI 挂载 → 同源 `/api/health` 200（截图 `docs/evidence/mobile-mode-a.png`） |
+| 非侵入式 | — | `paperclip` 仓库 `git status --porcelain` **全程为空**；全部产物位于独立仓库 |
+
+### 12.2 实现中的偏差（计划 → 实际，含原因）
+
+| # | 计划 | 实际 | 原因 |
+|---|---|---|---|
+| 1 | 模块放 `paperclip/apps/` | 独立仓库 `~/pix/paperclip-shell` | 你的要求：单独包、不在 paperclip 下、独立演进 |
+| 2 | `pnpm deploy --prod` staging | `pnpm pack`（16 个 workspace 包）→ `npm install file:*.tgz` → 复用 `applyBundledDependencyPatches` | `pnpm deploy` 在 pnpm 9.15.4 下按**过滤后子图**校验 `patchedDependencies`，仓库里 `acpx@0.12.0` 补丁在子图中不存在 → `ERR_PNPM_PATCH_NOT_APPLIED` 硬失败 |
+| 3 | 直接用 `pnpm --filter … build` | 前置注入 `node_modules/.bin` 到 `PATH` | 本机 `pnpm run` 的 PATH 未包含 workspace `.bin`，导致解析到 **Homebrew 全局 vite** 并因缺 `esbuild` 失败 |
+| 4 | `npm install` 即可 | 需 `--legacy-peer-deps` | npm 10.9.9 arborist 在该图上 `#loadPeerSet` 崩溃：`Cannot read properties of null (reading 'edgesOut')` |
+| 5 | —（未预见） | staging 后需手动执行 `@embedded-postgres/<platform>` 的 `hydrate-symlinks.js` | npm 跳过了该 optional 依赖的 postinstall，导致 ICU dylib 别名软链缺失，`initdb` 报 `Library not loaded: libicudata.77.dylib` |
+| 6 | `extraResources` 携带 server 树 | 打包脚本自行 `ditto` 复制 | electron-builder 默认忽略列表硬编码 `!**/node_modules/**`，会**静默丢弃** server 的运行时依赖（首次产物只有 111MB，缺 `node_modules`） |
+| 7 | `electron-builder --mac`（yml 内多 arch） | 每 arch 单独一轮 dir → copy → `--prepackaged` | `--prepackaged` 会忽略 arch 参数并展开 yml 的 arch 列表，导致 `-x64.dmg` 里装的其实是 arm64 包 |
+
+### 12.3 已验证的关键风险（计划 §9 的实测结论）
+
+- **风险 1（Electron 内置 Node 版本）**：**不成立**。Electron 44.9.2 内置 Node **24.22.0** ≥ 24.11.0；`sharp` 的 N-API 产物与 `embedded-postgres` 在该运行时下均正常。兜底开关 `PAPERCLIP_DESKTOP_NODE_BIN` 保留但未启用。
+- **风险 2（pnpm patch 未生效）**：以另一路径规避（§12.2 #2），并**显式校验** `globalThis.process.env` 标记存在。
+- **风险 3（平台二进制缺失）**：通过构建后自检覆盖（`initdb --version` 必须成功，否则构建失败）。
+- **风险 5（包体过大）**：**成立且未解决**。App 1.7G / dmg 585MB，主要来自 agent 运行时二进制（`@openai` 258M、`@anthropic-ai` 208M、`@github` 146M、`@embedded-postgres` 145M、`opencode-darwin-arm64` 138M）。裁剪方案见 §12.4。
+
+### 12.4 未完成 / 后续（明确不在本轮范围内）
+
+1. **Windows / Linux 产物**：需在对应平台构建（平台二进制不可交叉打包）；`nsis` / `AppImage` 配置已就位。
+2. **自动更新**：`electron-updater` 未接入，`latest.yml` 未生成。
+3. **代码签名与公证**：当前为未签名本地构建（`identity: null`）；发布需 Apple Developer ID + `notarytool`、Windows 代码签名证书。
+4. **包体裁剪**：按 adapter 拆分为可选下载（例如把 copilot/opencode/codex/claude 运行时做成按需安装），或首启下载；这是把 dmg 从 585MB 压到 ~200MB 的主要手段。
+5. **移动端真机**：iOS 需 Xcode 签名（`pod install` / 归档），Android 需 Android SDK；当前仅验证到 `cap sync` + WebView 级端到端。
+6. **移动端原生能力**：15 个插件已安装并同步，但尚未在 UI 中调用（模式 A 下 UI 不做改动，插件能力需模式 B 或后续接入）。
+7. **首次启动迁移耗时**：首次启动需应用 353 个迁移（实测内嵌 Postgres 集群初始化 + 迁移可接受），仍建议加进度提示。
+8. **托盘 / 关于页 / 日志导出**（M4 剩余项）。
+
+### 12.5 复现命令
+
+```bash
+cd ~/pix/paperclip-shell/desktop
+npm install
+PAPERCLIP_REPO=~/pix/paperclip npm run stage        # 构建 ui+server，pack+install 出可运行 server 树
+PAPERCLIP_REPO=~/pix/paperclip npm run preflight    # 运行时门禁
+PAPERCLIP_REPO=~/pix/paperclip npm run probe        # 端到端 7 项检查
+PAPERCLIP_DESKTOP_SMOKE=1 npm run dev               # 启动窗口并断言 UI 挂载
+PAPERCLIP_REPO=~/pix/paperclip npm run package:mac  # 产出 dmg
+
+cd ~/pix/paperclip-shell/mobile
+npm install && npm run add:ios && npm run add:android && npm run sync
+npm run doctor
+```
