@@ -306,8 +306,12 @@ the same provider. AI-only methods are excluded from agent tool discovery.
 
 Each invocation receives a private authentication home and only the selected
 grant's credentials. Inherited credential variables are cleared. Conflicting
-project authentication and provider-routing overrides are rejected. Managed
-failure cannot reactivate host or legacy credentials.
+project authentication and provider-routing overrides are rejected. That check
+reads the run's directory up to the project root (the nearest ancestor holding
+`.git`) and stops there; it never reads the account's own `~/.claude` or
+`~/.codex`, because a managed run hands the harness a disposable config
+directory and a globally configured provider is not this project's override.
+Managed failure cannot reactivate host or legacy credentials.
 
 A subscription invocation takes no lease. Two invocations of one grant, from
 the same or a different provider account, run at the same time. At cleanup,
@@ -590,6 +594,48 @@ compatible saved connections, including explicit personal accounts. The existing
 model picker uses that connection’s optional model IDs and accepts manual IDs.
 Changing connections preserves the model for explicit review. URLs and
 credentials belong to the connection; the model belongs to the agent.
+
+### Vendor presets (2026-10-19)
+
+The Connect-a-provider wall also offers one card per known vendor: **MiniMax
+(China)**, **DeepSeek**, **Zhipu GLM**, **Moonshot Kimi (China)**, and **Aliyun
+DashScope (Qwen)**. A card fills the provider URL, API format, and suggested
+model IDs, and the board can still edit them. These vendors are not new
+`AI_CONNECTION_CAPABILITIES` providers: each preset saves
+`routing.kind: "openai_compatible"` with the vendor URL, and the wire format
+decides the rest. `messages` keeps the credential under `anthropic` and runs on
+Claude (`x-api-key`); `chat` keeps it under `openai` and runs on OpenCode or
+Hermes (bearer). The catalog identity is the existing `messages-api` or
+`chat-completions-api` row, so no new store entry, brand artwork, billing
+provider, or subscription flow is required.
+
+First-run onboarding reaches the same presets from **Connect a model → Other
+providers**. That host is limited to the vendor cards and to the Claude wire
+format, because onboarding hires Claude and has no model picker to resolve a
+Chat Completions vendor's model. Completing it fixes the adapter to
+`claude_local`, takes the first suggested model ID for the agent, and hands the
+binding to the same environment test and hire a saved account uses. Picking a
+native source tile or switching credential mode clears the vendor connection.
+
+Each vendor publishes both surfaces from one key, so the API format select
+switches between them and follows the URL that belongs to the chosen format:
+
+| Vendor | Anthropic Messages base | Chat Completions base |
+| --- | --- | --- |
+| MiniMax (China) | `https://api.minimax.cn/anthropic` | `https://api.minimax.cn/v1` |
+| DeepSeek | `https://api.deepseek.com/anthropic` | `https://api.deepseek.com` |
+| Zhipu GLM | `https://open.bigmodel.cn/api/anthropic` | `https://open.bigmodel.cn/api/paas/v4` |
+| Moonshot Kimi (China) | `https://api.moonshot.cn/anthropic` | `https://api.moonshot.cn/v1` |
+| Aliyun DashScope (Qwen) | `https://dashscope.aliyuncs.com/api/v2/apps/claude-code-proxy` | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+
+The suggested model IDs are dated snapshots from each vendor's documentation,
+not an allowlist; the board can replace them, and the model picker accepts any
+ID the vendor serves. Endpoints were verified against the vendors' published
+setup guides ([MiniMax](https://platform.minimaxi.com/docs/api-reference/text-anthropic-api),
+[DeepSeek](https://api-docs.deepseek.com/), [Zhipu](https://docs.bigmodel.cn/cn/coding-plan/latest-model),
+[Moonshot](https://platform.kimi.com/docs/models), [DashScope](https://help.aliyun.com/zh/model-studio/models)).
+Presets receive no control-plane key check, exactly like other custom URLs:
+**Run test** in the agent's execution environment is the proof.
 
 | Harness | Implemented managed routes |
 | --- | --- |

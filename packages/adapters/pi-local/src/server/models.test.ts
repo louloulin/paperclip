@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  discoverPiModelsCached,
   ensurePiModelConfiguredAndAvailable,
   listPiModels,
   resetPiModelsCacheForTests,
@@ -59,6 +60,51 @@ describe("pi models", () => {
         message:
           "Configured Pi model is unavailable: provider/missing. 13 models are available; list them with `pi --list-models`.",
       });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("parses context window and max output tokens from `pi --list-models`", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paperclip-pi-models-"));
+    const command = join(directory, "pi");
+    // Reproduce pi's columnar `--list-models` output: provider, model,
+    // context window, max-out, thinking level, image support.
+    await writeFile(
+      command,
+      [
+        "#!/bin/sh",
+        "printf 'provider  model  context  max-out  thinking  images\\n'",
+        "printf 'anthropic  claude-sonnet-4-6  200,000  64,000  high  yes\\n'",
+        "printf 'xai  grok-4-fast  128000  32000  low  no\\n'",
+        "printf 'openai  gpt-5  -  -  medium  no\\n'",
+      ].join("\n"),
+    );
+    await chmod(command, 0o755);
+
+    try {
+      // discoverPiModelsCached() honors the explicit `command` argument, so
+      // it points at our mock script rather than the default "pi" binary.
+      const models = await discoverPiModelsCached({
+        command,
+        cwd: process.cwd(),
+        env: {},
+      });
+      const byId = new Map(models.map((model) => [model.id, model]));
+
+      const sonnet = byId.get("anthropic/claude-sonnet-4-6");
+      expect(sonnet?.contextWindow).toBe(200_000);
+      expect(sonnet?.maxTokens).toBe(64_000);
+
+      const grok = byId.get("xai/grok-4-fast");
+      expect(grok?.contextWindow).toBe(128_000);
+      expect(grok?.maxTokens).toBe(32_000);
+
+      // Unknown values (the "-" placeholders pi prints) must not surface
+      // as 0 or NaN; the UI treats absence as "fall back to runtime size".
+      const gpt = byId.get("openai/gpt-5");
+      expect(gpt?.contextWindow).toBeUndefined();
+      expect(gpt?.maxTokens).toBeUndefined();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

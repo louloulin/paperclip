@@ -7,6 +7,7 @@ import { LocalProviderLoginInstructions } from "./AdapterLoginChrome";
 import { useLocalAiLogin } from "./ai-connections/useLocalAiLogin";
 import { aiConnectionsApi } from "@/api/ai-connections";
 import { aiProviderForAdapter } from "./ai-connections/AiConnectionField";
+import { AiProviderSetup } from "./ai-connections/AiProviderSetup";
 import type { AiConnectionBinding } from "@paperclipai/shared";
 import { storeProviderApiKey } from "../lib/provider-credential";
 import { SavedProviderKeySelect, useSavedProviderKeys } from "./onboarding/SavedProviderKeySelect";
@@ -762,9 +763,19 @@ function OnboardingWizardInner({
    */
   const apiKeySecretRef = useRef<{ key: string; companyId: string; envKey: string; binding?: Awaited<ReturnType<typeof storeProviderApiKey>>["binding"]; aiConnection?: AiConnectionBinding } | null>(null);
   const managedSubscriptionRef = useRef<{ companyId: string; binding: AiConnectionBinding } | null>(null);
+  /**
+   * A vendor preset connected on this step. The vendor's Messages endpoint runs
+   * on Claude, so choosing one also fixes the adapter and its model; the
+   * binding then travels the same path as a saved account (environment test and
+   * hire both receive it).
+   */
+  const [vendorSetupOpen, setVendorSetupOpen] = useState(false);
+  const [vendorConnection, setVendorConnection] = useState<{ binding: AiConnectionBinding; model: string } | null>(null);
+  const pendingVendorHireRef = useRef(false);
   const managedProvider = aiProviderForAdapter(adapterType);
   const managedSubscriptionProvider = managedProvider === "anthropic" || managedProvider === "openai" || managedProvider === "xai" ? managedProvider : undefined;
   function managedBindingForStep(): AiConnectionBinding | undefined {
+    if (vendorConnection) return vendorConnection.binding;
     if (credentialMode === "api") return selectedApiKey?.aiConnection ?? (
       !selectedApiKey && apiKeySecretRef.current?.companyId === createdCompanyId && apiKeySecretRef.current.envKey === apiKeyEnvKeyFor(adapterType)
         ? apiKeySecretRef.current.aiConnection : undefined);
@@ -809,6 +820,8 @@ function OnboardingWizardInner({
     setCreatedProjectId(null);
     setCreatedIssueRef(null);
     setCreatedAgentId(null);
+    setVendorConnection(null);
+    setVendorSetupOpen(false);
   }
 
   // Sync step and company when onboarding opens with explicit options.
@@ -1301,6 +1314,7 @@ function OnboardingWizardInner({
   // attempt, and a failed attempt waits for an explicit Connect retry.
   useEffect(() => {
     if (!effectiveOnboardingOpen || step !== 4 || connectPhase !== "ready" ||
+        vendorSetupOpen || vendorConnection ||
         !connectStepReady || connectStepNeedsLogin || connectCredentialStored ||
         credentialMode !== "subscription" ||
         (adapterType !== "claude_local" && adapterType !== "codex_local") ||
@@ -1309,7 +1323,18 @@ function OnboardingWizardInner({
     autoConnectStartedRef.current = true;
     void handleGiveHeartbeat();
   }, [effectiveOnboardingOpen, step, connectPhase, connectStepReady, connectStepNeedsLogin,
-    connectCredentialStored, credentialMode, adapterType, hasSavedSubscription, localLogin.status, loading]);
+    connectCredentialStored, credentialMode, adapterType, hasSavedSubscription, localLogin.status, loading,
+    vendorSetupOpen, vendorConnection]);
+
+  // A vendor preset completes here rather than through the source tiles: the
+  // connection is already stored, so the hire follows the same path a saved
+  // account takes. Runs on the render that carries the new binding, so the
+  // environment test and the hire both see it.
+  useEffect(() => {
+    if (!pendingVendorHireRef.current) return;
+    pendingVendorHireRef.current = false;
+    void handleGiveHeartbeat();
+  }, [vendorConnection]);
 
   /**
    * The beats, each waiting for the animation before it.
@@ -1389,7 +1414,12 @@ function OnboardingWizardInner({
    */
   const connectSourceLabel = CONNECT_SOURCE_NAMES[adapterType] ?? adapterType;
   const connectCta: { label: string; icon: FooterPrimaryIcon; disabled: boolean } =
-    connectProgress
+    vendorSetupOpen
+      ? // The vendor sheet owns its own Connect; the step's button waits behind it.
+        { label: "Connect", icon: "arrow", disabled: true }
+      : vendorConnection
+        ? { label: "Connect", icon: "arrow", disabled: loading }
+        : connectProgress
       ? { label: adapterEnvLoading ? "Testing…" : connectProgress, icon: "spinner", disabled: true }
       : connectPhase === "waiting"
       ? { label: "Waiting for code", icon: "spinner", disabled: true }
@@ -1450,6 +1480,8 @@ function OnboardingWizardInner({
    * it is meant to start, against a source with no credential.
    */
   function handleConnectStepPrimary() {
+    // The vendor sheet owns its own Connect; the step's button waits behind it.
+    if (vendorSetupOpen) return;
     // Mid-sequence the button belongs to the sign-in, not to the step.
     if (connectPhase === "ready" && connectStepNeedsLogin) {
       if (connectAuthUrl) window.open(connectAuthUrl, "_blank", "noreferrer,noopener");
@@ -1518,6 +1550,11 @@ function OnboardingWizardInner({
     // preselection this step was changed to stop doing. The saved answer was
     // unofferable, so the question is open again.
     setSourcePicked(false);
+    // A vendor binding names the adapter it was made for (Claude, Messages).
+    // If that adapter is not offerable here the connection cannot run, so it
+    // must not travel to whichever adapter replaced it.
+    setVendorConnection(null);
+    pendingVendorHireRef.current = false;
     if (next === "codex_local") return;
     if (next === "opencode_local") {
       setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
@@ -2725,7 +2762,35 @@ function OnboardingWizardInner({
               )}
 
               {/* Step 4: Connect a model — adapter + model + env check (capsule above) */}
-              {step === 4 && (
+              {step === 4 && (vendorSetupOpen ? (
+                <motion.div key="step-4-vendor" {...stepContentMotion} exit={stepHandoff ? stepContentMotion.exit : undefined} className="space-y-8">
+                  {createdCompanyId ? (
+                    <AiProviderSetup
+                      key={createdCompanyId}
+                      companyId={createdCompanyId}
+                      vendorOnly
+                      // The vendor's Claude-compatible surface is its documented
+                      // coding path, and Claude is the adapter this step hires.
+                      protocols={["messages"]}
+                      initialProtocol="messages"
+                      onCancel={() => setVendorSetupOpen(false)}
+                      onComplete={(binding, context) => {
+                        const nextModel = context?.models[0] ?? "";
+                        pendingVendorHireRef.current = true;
+                        setVendorConnection({ binding, model: nextModel });
+                        setAdapterType("claude_local");
+                        setModel(nextModel);
+                        setSourcePicked(true);
+                        setVendorSetupOpen(false);
+                      }}
+                    />
+                  ) : (
+                    <p role="status" className="text-sm text-muted-foreground">
+                      Create your organization before connecting a provider.
+                    </p>
+                  )}
+                </motion.div>
+              ) : (
                 <motion.div key="step-4" {...stepContentMotion} exit={stepHandoff ? stepContentMotion.exit : undefined} className="space-y-8">
                   <div>
                     {/* Sources come from `recommendedAdapters`, not a list
@@ -2755,6 +2820,8 @@ function OnboardingWizardInner({
                       onSelect={(id) => {
                         if (connectPhase !== "idle") return;
                         autoConnectStartedRef.current = false;
+                        setVendorConnection(null);
+                        pendingVendorHireRef.current = false;
                         setSourcePicked(true);
                         setAdapterType(id);
                         if (id !== adapterType) setRunner("auto");
@@ -2787,7 +2854,22 @@ function OnboardingWizardInner({
                       transition={{ opacity: SOURCE_LINK_EXIT, height: MAKE_ROOM }}
                     >
                       <div className="-ml-3 mt-1">
-                        <CredentialModeLink mode={credentialMode} onChange={setCredentialMode} />
+                        <CredentialModeLink mode={credentialMode} onChange={(next) => {
+                          setVendorConnection(null);
+                          pendingVendorHireRef.current = false;
+                          setCredentialMode(next);
+                        }} />
+                        {createdCompanyId && !loading && (
+                          <button
+                            type="button"
+                            onClick={() => setVendorSetupOpen(true)}
+                            className="group ml-1 cursor-pointer rounded-md px-3 py-2 text-left text-sm font-medium outline-none focus-visible:ring-ring/50 focus-visible:ring-(length:--rad-3)"
+                          >
+                            <span className="whitespace-nowrap text-muted-foreground underline decoration-muted-foreground/40 underline-offset-4 transition-colors group-hover:text-foreground group-hover:decoration-foreground/40">
+                              Other providers
+                            </span>
+                          </button>
+                        )}
                         {savedKeys.options.length > 0 && <p className="px-3 text-sm text-muted-foreground">{savedKeys.options.length} saved API {savedKeys.options.length === 1 ? "key available" : "keys available"}.</p>}
                         {credentialMode === "subscription" && authSignalStatus === "present" && <p className="px-3 text-sm text-muted-foreground">An existing provider connection is available.</p>}
                       </div>
@@ -3126,7 +3208,7 @@ function OnboardingWizardInner({
                     </div>
                   )}
                 </motion.div>
-              )}
+              ))}
               </AnimatePresence>
 
               {/* Step 5: Review — lead is online (shared capsule above) */}
@@ -3145,13 +3227,21 @@ function OnboardingWizardInner({
               {/* Step 1 shares the arc's footer so the pair keeps its shape and
                   position from the first screen onward. It has no Back: step 1
                   is the first screen now that the front door is gone, and
-                  `canGoBackFromOnboardingStep` returns false for it. */}
-              {(isAgentArcStep || step === 1) && (
+                  `canGoBackFromOnboardingStep` returns false for it.
+
+                  The vendor sheet brings its own footer; two Back/Connect pairs
+                  on one screen is a form that looks like it can be answered
+                  twice. While it is open, this one steps aside entirely. */}
+              {(isAgentArcStep || step === 1) && !vendorSetupOpen && (
                 <FooterNav
                   onBack={
                     // On the connect step Back unwinds the sign-in first, and
                     // only means "the previous step" once nothing is running.
-                    step === 4 && connectPhase !== "idle"
+                    // The vendor sheet closes first: it is a sub-screen of this
+                    // step, not a step of its own.
+                    step === 4 && vendorSetupOpen
+                      ? () => setVendorSetupOpen(false)
+                      : step === 4 && connectPhase !== "idle"
                       ? unwindConnectStep
                       : canGoBackFromOnboardingStep({ currentStep: step, entryStep })
                         ? () => setStep(backStepFrom(step))

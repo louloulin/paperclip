@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
+  AI_VENDOR_PRESETS,
+  aiConnectionCatalogSlug,
   aiProviderRoutingSchema,
+  aiVendorAuth,
+  aiVendorPresetForEndpoint,
+  aiVendorProvider,
   createAiConnectionSchema,
   isAiConnectionCompatible,
 } from "@paperclipai/shared";
@@ -148,5 +153,87 @@ describe("provider routing", () => {
     });
     expect(aiProviderRoutingSchema.safeParse({ ...routing, auth: "aws_credentials" }).success).toBe(false);
     for (const key of ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]) expect(projected.env).not.toHaveProperty(key);
+  });
+  it("requires an OpenAI-compatible base URL and routes through OpenCode / Hermes", () => {
+    expect(aiProviderRoutingSchema.safeParse({ kind: "openai_compatible", protocol: "chat", auth: "bearer" }).success).toBe(false);
+    const routing = aiProviderRoutingSchema.parse({
+      kind: "openai_compatible",
+      protocol: "chat",
+      auth: "bearer",
+      baseUrl: "https://api.deepseek.com/v1",
+    });
+    expect(isAiConnectionCompatible({ provider: "openai", method: "api_key", routing }, "opencode_local")).toBe(true);
+    expect(isAiConnectionCompatible({ provider: "openai", method: "api_key", routing }, "hermes_local")).toBe(true);
+    expect(isAiConnectionCompatible({ provider: "openai", method: "api_key", routing }, "codex_local")).toBe(false);
+    expect(isAiConnectionCompatible({ provider: "openai", method: "api_key", routing }, "claude_local")).toBe(false);
+    const projected = managedProviderRouting(routing, "opencode_local", "fixture-key", "deepseek-chat");
+    expect(projected.env.PAPERCLIP_AI_PROVIDER_KEY).toBe("fixture-key");
+    expect(projected.env.PAPERCLIP_AI_PROVIDER_URL).toBe("https://api.deepseek.com/v1");
+    expect(projected.config.model).toBe("paperclip/deepseek-chat");
+    const hermes = managedProviderRouting(routing, "hermes_local", "fixture-key", "deepseek-chat");
+    expect(hermes.env.OPENAI_BASE_URL).toBe("https://api.deepseek.com/v1");
+    expect(hermes.env.OPENAI_API_KEY).toBe("fixture-key");
+  });
+  it("accepts OpenAI-compatible vendor presets as full connection create payloads", () => {
+    for (const preset of AI_VENDOR_PRESETS) {
+      for (const protocol of ["chat", "messages"] as const) {
+        const result = createAiConnectionSchema.safeParse({
+          provider: aiVendorProvider(protocol),
+          method: "api_key",
+          name: preset.name,
+          ownership: "personal",
+          apiKey: "fixture-key",
+          routing: {
+            kind: "openai_compatible",
+            protocol,
+            auth: aiVendorAuth(protocol),
+            baseUrl: preset.endpoints[protocol],
+            models: preset.models.map((id) => ({ id })),
+          },
+        });
+        expect(result.success, `${preset.id}/${protocol}: ${JSON.stringify(result, null, 2)}`).toBe(true);
+      }
+    }
+  });
+  it("projects a vendor preset's Claude-compatible endpoint through claude_local", () => {
+    const preset = AI_VENDOR_PRESETS.find((entry) => entry.id === "minimax-cn")!;
+    expect(preset.endpoints).toEqual({
+      messages: "https://api.minimax.cn/anthropic",
+      chat: "https://api.minimax.cn/v1",
+    });
+    const routing = aiProviderRoutingSchema.parse({
+      kind: "openai_compatible",
+      protocol: preset.defaultProtocol,
+      auth: aiVendorAuth(preset.defaultProtocol),
+      baseUrl: preset.endpoints[preset.defaultProtocol],
+      models: preset.models.map((id) => ({ id })),
+    });
+    expect(aiVendorProvider("messages")).toBe("anthropic");
+    expect(aiVendorAuth("messages")).toBe("api_key");
+    expect(isAiConnectionCompatible({ provider: "anthropic", method: "api_key", routing }, "claude_local")).toBe(true);
+    expect(isAiConnectionCompatible({ provider: "anthropic", method: "api_key", routing }, "opencode_local")).toBe(false);
+    const projected = managedProviderRouting(routing, "claude_local", "fixture-key", "MiniMax-M3");
+    expect(projected.env.ANTHROPIC_BASE_URL).toBe("https://api.minimax.cn/anthropic");
+    expect(projected.env.ANTHROPIC_API_KEY).toBe("fixture-key");
+    expect(projected.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(projected.env.ANTHROPIC_MODEL).toBe("MiniMax-M3");
+    // The chat surface runs on the OpenAI-compatible harnesses instead.
+    const chatRouting = aiProviderRoutingSchema.parse({
+      ...routing,
+      protocol: "chat",
+      auth: "bearer",
+      baseUrl: preset.endpoints.chat,
+    });
+    const chatProjection = managedProviderRouting(chatRouting, "opencode_local", "fixture-key", "MiniMax-M3");
+    expect(chatProjection.env.PAPERCLIP_AI_PROVIDER_URL).toBe("https://api.minimax.cn/v1");
+    expect(chatProjection.config.model).toBe("paperclip/MiniMax-M3");
+  });
+  it("keeps vendor presets in the existing chat/messages catalog rows", () => {
+    expect(aiConnectionCatalogSlug("anthropic", { kind: "openai_compatible", protocol: "messages" })).toBe("messages-api");
+    expect(aiConnectionCatalogSlug("openai", { kind: "openai_compatible", protocol: "chat" })).toBe("chat-completions-api");
+    expect(aiVendorPresetForEndpoint("https://api.minimax.cn/anthropic/")?.id).toBe("minimax-cn");
+    expect(aiVendorPresetForEndpoint("https://API.MiniMax.cn/v1")?.id).toBe("minimax-cn");
+    expect(aiVendorPresetForEndpoint("https://gateway.example/v1")).toBeUndefined();
+    expect(aiVendorPresetForEndpoint(null)).toBeUndefined();
   });
 });

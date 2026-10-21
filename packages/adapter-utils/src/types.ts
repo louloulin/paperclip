@@ -296,6 +296,17 @@ export interface AdapterExecutionContext {
 export interface AdapterModel {
   id: string;
   label: string;
+  /**
+   * Total context window size (input + output) in tokens, when known at
+   * discovery time. Optional: most catalogs only know it for a subset of
+   * providers, so adapters should omit it when they cannot resolve it.
+   */
+  contextWindow?: number;
+  /**
+   * Maximum output tokens per response, when known at discovery time.
+   * Optional: omit when the adapter cannot resolve it.
+   */
+  maxTokens?: number;
 }
 
 export type AdapterEnvironmentCheckLevel = "info" | "warn" | "error";

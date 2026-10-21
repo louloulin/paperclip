@@ -6,7 +6,11 @@ import { toolsApi } from "@/api/tools";
 import { useNavigate } from "@/lib/router";
 import { AiConnectionAccountControls } from "./AiConnectionAccountControls";
 import { AiConnectionUsagePanel } from "./AiConnectionUsagePanel";
-import type { ToolConnection, AiConnectionMetadata } from "@paperclipai/shared";
+import {
+  aiVendorPresetForEndpoint,
+  type ToolConnection,
+  type AiConnectionMetadata,
+} from "@paperclipai/shared";
 import { aiMethodLabel } from "./model";
 
 export function ManagedAiConnectionRow({
@@ -16,9 +20,19 @@ export function ManagedAiConnectionRow({
 }) {
   const metadata = connection.config?.ai as AiConnectionMetadata | undefined;
   if (!metadata) return null;
+  const vendor = metadata.routing ? aiVendorPresetForEndpoint(metadata.routing.baseUrl) : undefined;
+  const destination = metadata.routing
+    ? metadata.routing.kind === "bedrock"
+      ? `Bedrock · ${metadata.routing.region}`
+      : metadata.routing.kind === "openrouter"
+        ? "OpenRouter"
+        : vendor
+          ? `${vendor.name} · ${metadata.routing.protocol === "messages" ? "Messages" : "Chat"}`
+          : metadata.routing.baseUrl
+    : aiMethodLabel(metadata.provider, metadata.method);
   return (
     <p className="text-xs text-muted-foreground">
-      {metadata.routing ? metadata.routing.kind === "bedrock" ? `Bedrock · ${metadata.routing.region}` : metadata.routing.kind === "openrouter" ? "OpenRouter" : metadata.routing.baseUrl : aiMethodLabel(metadata.provider, metadata.method)} ·{" "}
+      {destination} ·{" "}
       {connection.credentialPolicy === "per_user"
         ? "Personal"
         : "Company shared"}

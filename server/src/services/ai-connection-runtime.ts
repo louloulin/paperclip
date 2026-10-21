@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { HttpError, unprocessable } from "../errors.js";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -115,8 +116,11 @@ export async function assertManagedAiProjectAuth(
       [
         "-c",
         `
-directory=$1; pattern=$2; shift 2
+directory=$1; start=$1; pattern=$2; shift 2
 while :; do
+  # The account's own dotfiles are not project settings, and a managed run
+  # redirects the harness config directory away from them.
+  if test "$directory" != "$start" && test "$directory" = "$HOME"; then break; fi
   for relative in "$@"; do
     file="$directory/$relative"
     if test -f "$file"; then
@@ -126,6 +130,10 @@ while :; do
       if test "$result" -ne 1; then exit 43; fi
     fi
   done
+  # The harness reads project settings from the project root; a directory above
+  # it belongs to another checkout, not to this run. A worktree marks its root
+  # with a .git file instead of a directory, so this tests for either.
+  if test -e "$directory/.git"; then break; fi
   parent=$(dirname "$directory")
   if test "$parent" = "$directory"; then break; fi
   directory=$parent
@@ -150,9 +158,18 @@ done`,
       );
     return;
   }
-  let directory =
+  // Project settings are the ones between the run's directory and the project
+  // root. Walking past either reads the account's personal dotfiles — which a
+  // managed run never opens, because it hands the harness a disposable config
+  // directory — as if they were this project's configuration, and that blocked
+  // every managed connection on a machine that configures a provider globally.
+  const start =
     typeof config.cwd === "string" ? path.resolve(config.cwd) : process.cwd();
+  let directory = start;
   for (;;) {
+    // The account's own dotfiles are not project settings, and a managed run
+    // redirects the harness config directory away from them.
+    if (directory !== start && directory === os.homedir()) break;
     for (const relative of files) {
       try {
         const content = await readFile(path.join(directory, relative), "utf8");
@@ -170,6 +187,7 @@ done`,
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
     }
+    if (existsSync(path.join(directory, ".git"))) break;
     const parent = path.dirname(directory);
     if (parent === directory) break;
     directory = parent;

@@ -973,6 +973,74 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       });
     });
 
+    // A vendor preset is the one model source this step does not name in a
+    // tile: it arrives on its own surface, and the connection it stores has to
+    // reach the hire the way a saved account does.
+    it("hires Claude on a vendor preset connection reached from Other providers", async () => {
+      mockAdapterRegistry.list = [{ type: "claude_local" }];
+      mockCompaniesApi.create.mockResolvedValue({ id: "company-new", issuePrefix: "INI" });
+      window.localStorage.setItem(
+        ONBOARDING_STORAGE_KEY,
+        JSON.stringify({ step: 1, companyName: "Initech" }),
+      );
+      mockDialog.onboardingOptions = {};
+      mockCompany.companies = [];
+      mockCompany.loading = false;
+      mockCompaniesApi.list.mockResolvedValue([]);
+
+      const { root, queryClient } = render();
+      await renderWizardView(root, queryClient);
+      await flushReact();
+      const clickByText = async (match: (text: string) => boolean) => {
+        const el = [...document.body.querySelectorAll("button")].find((b) =>
+          match(b.getAttribute("aria-label")?.startsWith("Use ") ? b.getAttribute("aria-label")! : b.textContent?.trim() ?? ""),
+        )!;
+        await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+        await flushReact();
+      };
+
+      await clickByText((t) => t.startsWith("Continue"));
+      const agentField = document.body.querySelector("#onboarding-agent-name") as HTMLInputElement;
+      await act(async () => { setControlledValue(agentField, "Ada"); });
+      await flushReact();
+      await clickByText((t) => isArcPrimary(t));
+      expect(document.body.textContent).toContain("Connect a model");
+
+      await clickByText((t) => t === "Other providers");
+      const card = [...document.body.querySelectorAll("button[aria-label]")]
+        .find((b) => b.getAttribute("aria-label") === "MiniMax (China)") as HTMLButtonElement;
+      expect(card).toBeDefined();
+      await act(async () => { card.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await flushReact();
+      const keyField = document.body.querySelector('input[aria-label="API key"]') as HTMLInputElement;
+      await act(async () => { setControlledValue(keyField, "vendor-key"); });
+      await flushReact();
+      await act(async () => {
+        document.body.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+      await flushReact();
+      await flushReact();
+
+      expect(mockAgentsApi.hire).toHaveBeenCalledTimes(1);
+      const hireBody = (mockAgentsApi.hire.mock.calls.at(-1) as unknown[])[1] as {
+        adapterType: string;
+        adapterConfig: { model?: string };
+        runtimeConfig: { aiConnection?: unknown };
+      };
+      expect(hireBody.adapterType).toBe("claude_local");
+      // The suite stubs the adapter's own config builder, so the model the step
+      // resolved for the vendor is asserted where it enters it.
+      expect(mockAdapterBuild.buildAdapterConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ adapterType: "claude_local", model: "MiniMax-M3.1-Flash" }),
+      );
+      expect(hireBody.runtimeConfig.aiConnection).toEqual(expect.objectContaining({
+        connectionId: "managed-connection",
+        grantId: "managed-grant",
+      }));
+
+      await act(async () => root.unmount());
+    });
+
     it("re-probes rather than reusing a pass when the credential mode changes", async () => {
       mockAgentsApi.testEnvironment.mockResolvedValue({
         adapterType: "claude_local",

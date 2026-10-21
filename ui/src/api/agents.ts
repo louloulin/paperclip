@@ -50,6 +50,17 @@ export interface AgentKey {
 export interface AdapterModel {
   id: string;
   label: string;
+  /**
+   * Total context window size (input + output) in tokens, when the adapter
+   * surfaces it at discovery time. Omitted when the adapter cannot resolve
+   * it; the UI falls back to the runtime-reported size in that case.
+   */
+  contextWindow?: number;
+  /**
+   * Maximum output tokens per response, when the adapter surfaces it at
+   * discovery time. Omitted when the adapter cannot resolve it.
+   */
+  maxTokens?: number;
 }
 
 export interface DetectedAdapterModel {

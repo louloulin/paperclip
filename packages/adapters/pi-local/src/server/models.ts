@@ -39,10 +39,32 @@ function parseModelsOutput(stdout: string): AdapterModel[] {
     if (provider === "provider" && model === "model") continue; // Skip header
     
     const id = `${provider}/${model}`;
-    parsed.push({ id, label: id });
+    // Pi also exposes the model's advertised context window and max output
+    // tokens in the same row; surface them so the UI can render the
+    // context-fill gauge and reasoning budget without re-querying the CLI.
+    const contextWindow = parseTokenCount(parts[2]);
+    const maxTokens = parseTokenCount(parts[3]);
+    const entry: AdapterModel = { id, label: id };
+    if (contextWindow != null) entry.contextWindow = contextWindow;
+    if (maxTokens != null) entry.maxTokens = maxTokens;
+    parsed.push(entry);
   }
   
   return parsed;
+}
+
+// Pi prints token counts with thousands separators (e.g. "128,000") and
+// sometimes emits a dash ("-") or "?" when the value is unknown. Anything
+// we cannot parse as a positive integer is dropped so the UI doesn't show
+// a placeholder like 0 or NaN for context window / max tokens.
+function parseTokenCount(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === "-" || trimmed === "?") return null;
+  const cleaned = trimmed.replace(/,/g, "");
+  const value = Number(cleaned);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.trunc(value);
 }
 
 function dedupeModels(models: AdapterModel[]): AdapterModel[] {
@@ -52,7 +74,14 @@ function dedupeModels(models: AdapterModel[]): AdapterModel[] {
     const id = model.id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    deduped.push({ id, label: model.label.trim() || id });
+    const entry: AdapterModel = { id, label: model.label.trim() || id };
+    if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
+      entry.contextWindow = model.contextWindow;
+    }
+    if (typeof model.maxTokens === "number" && model.maxTokens > 0) {
+      entry.maxTokens = model.maxTokens;
+    }
+    deduped.push(entry);
   }
   return deduped;
 }

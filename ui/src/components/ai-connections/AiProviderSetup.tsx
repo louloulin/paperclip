@@ -4,6 +4,11 @@ import { Network, Monitor } from "lucide-react";
 import {
   aiProviderRoutingSchema,
   createAiConnectionSchema,
+  AI_VENDOR_PRESETS,
+  aiVendorAuth,
+  aiVendorPreset,
+  aiVendorPresetForEndpoint,
+  type AiVendorProtocol,
   type AiProvider,
   type AiProviderRouting,
   type AiConnectionBinding,
@@ -25,6 +30,12 @@ import {
 } from "@/components/ui/select";
 import { AiConnectionCredentialStep } from "./AiConnectionCredentialStep";
 
+const vendorChoices = AI_VENDOR_PRESETS.map((preset) => ({
+  id: `vendor:${preset.id}`,
+  name: preset.name,
+  description: "Anthropic- or OpenAI-compatible API key",
+  presetId: preset.id,
+}));
 const providers = [
   {
     id: "openai",
@@ -38,6 +49,7 @@ const providers = [
   },
   { id: "google", name: "Google", description: "Gemini API key" },
   { id: "xai", name: "xAI", description: "Grok subscription or API key" },
+  ...vendorChoices,
   {
     id: "openrouter",
     name: "OpenRouter",
@@ -63,7 +75,14 @@ const providers = [
     advanced: true,
   },
 ] as const;
-type ProviderChoice = (typeof providers)[number]["id"];
+type ProviderChoice = (typeof providers)[number]["id"] | "openai_compatible";
+
+/** What a completed setup can tell its host beyond the binding itself. */
+export interface AiProviderSetupResult {
+  vendorId?: string;
+  protocol?: AiVendorProtocol;
+  models: string[];
+}
 
 export function AiProviderSetup({
   companyId,
@@ -73,6 +92,8 @@ export function AiProviderSetup({
   initialProtocol,
   providerLabel,
   advancedOnly = false,
+  vendorOnly = false,
+  protocols,
   reconnect,
   onCancel,
   onComplete,
@@ -84,21 +105,38 @@ export function AiProviderSetup({
   initialProtocol?: AiProviderRouting["protocol"];
   providerLabel?: string;
   advancedOnly?: boolean;
+  /** Show only the known-vendor cards; used by hosts that already offered the native providers. */
+  vendorOnly?: boolean;
+  /** Wire formats the host can run. One entry locks the format select to it. */
+  protocols?: AiVendorProtocol[];
   reconnect?: AiManagedConnectionSummary;
   onCancel: () => void;
   onComplete: (
     binding: Exclude<AiConnectionBinding, { mode: "responsible_user" }>,
+    context?: AiProviderSetupResult,
   ) => void;
 }) {
+  const reconnectKindRaw: string | undefined = reconnect?.routing?.kind;
+  const reconnectPreset = reconnectKindRaw === "openai_compatible"
+    ? aiVendorPresetForEndpoint(reconnect?.routing?.baseUrl)
+    : undefined;
   const [provider, setProvider] = useState<ProviderChoice | undefined>(
     reconnect
-      ? reconnect.routing?.kind === "gateway" ||
-        reconnect.routing?.kind === "local" ||
-        reconnect.routing?.kind === "bedrock"
-        ? reconnect.routing.kind
+      ? reconnectKindRaw === "gateway" ||
+        reconnectKindRaw === "local" ||
+        reconnectKindRaw === "bedrock" ||
+        reconnectKindRaw === "openai_compatible"
+        ? (reconnectKindRaw as ProviderChoice)
         : reconnect.provider
       : initialProvider,
   );
+  const [vendorPresetId, setVendorPresetId] = useState<string | null>(
+    reconnectPreset?.id ?? null,
+  );
+  const vendorPreset = aiVendorPreset(vendorPresetId);
+  const protocolOptions: AiVendorProtocol[] = protocols ?? ["messages", "chat"];
+  const presetProtocol = (preset: NonNullable<ReturnType<typeof aiVendorPreset>>): AiVendorProtocol =>
+    protocolOptions.includes(preset.defaultProtocol) ? preset.defaultProtocol : protocolOptions[0];
   const [step, setStep] = useState(
     reconnect || initialProvider ? "connect" : "provider",
   );
@@ -106,18 +144,36 @@ export function AiProviderSetup({
   const [allAgentsChoice, setAllAgents] = useState<boolean>();
   const [agentIds, setAgentIds] = useState(new Set(agentId ? [agentId] : []));
   const [protocol, setProtocol] = useState<AiProviderRouting["protocol"]>(
-    reconnect?.routing?.protocol ?? initialProtocol ?? "responses",
+    reconnect?.routing?.protocol ??
+      initialProtocol ??
+      (vendorPreset
+        ? presetProtocol(vendorPreset)
+        : provider === "openai_compatible"
+          ? protocolOptions[0]
+          : "responses"),
   );
   const [auth, setAuth] = useState<AiProviderRouting["auth"]>(
     reconnect?.routing?.auth ?? "bearer",
   );
-  const [baseUrl, setBaseUrl] = useState(reconnect?.routing?.baseUrl ?? "");
+  const [baseUrl, setBaseUrl] = useState(
+    reconnect?.routing?.baseUrl ??
+      (vendorPreset ? vendorPreset.endpoints[presetProtocol(vendorPreset)] : ""),
+  );
   const [region, setRegion] = useState(
     reconnect?.routing?.region ?? "us-east-1",
   );
   const [models, setModels] = useState(
-    reconnect?.routing?.models.map((m) => m.id).join(", ") ?? "",
+    reconnect?.routing?.models.map((m) => m.id).join(", ") ??
+      (vendorPreset ? vendorPreset.models.join(", ") : ""),
   );
+  // A vendor preset derives authentication from its wire format: the Claude-compatible
+  // surface takes an x-api-key, Chat Completions takes a bearer token.
+  const vendorProtocol: AiVendorProtocol | undefined = vendorPreset
+    ? (protocol === "messages" ? "messages" : "chat")
+    : undefined;
+  const effectiveAuth: AiProviderRouting["auth"] = vendorProtocol
+    ? aiVendorAuth(vendorProtocol)
+    : auth;
   const [apiKey, setApiKey] = useState("");
   const client = useQueryClient();
   const accounts = useQuery({
@@ -131,20 +187,23 @@ export function AiProviderSetup({
     queryKey: ["agents", companyId, "provider-access"],
     queryFn: () => agentsApi.list(companyId),
   });
-  const label = providerLabel ?? providers.find((p) => p.id === provider)?.name ?? "provider";
-  const advanced = reconnect ? Boolean(reconnect.routing) : ["openrouter", "bedrock", "gateway", "local"].includes(provider ?? "");
+  const label = providerLabel ?? vendorPreset?.name ?? providers.find((p) => p.id === provider)?.name ?? "provider";
+  const advanced = reconnect
+    ? Boolean(reconnect.routing)
+    : provider === "openai_compatible" ||
+      ["openrouter", "bedrock", "gateway", "local"].includes(provider ?? "");
   const nativeProvider: AiProvider =
     provider === "bedrock"
       ? "anthropic"
-      : provider === "gateway" || provider === "local"
+      : provider === "gateway" || provider === "local" || provider === "openai_compatible"
         ? protocol === "messages"
           ? "anthropic"
           : "openai"
-        : (provider ?? "openai");
+        : ((provider as AiProvider | undefined) ?? "openai");
   const name =
     reconnect?.name ??
     `${ownership === "personal" ? "My" : "Company"} ${
-      provider === "gateway" && baseUrl
+      (provider === "gateway" || provider === "openai_compatible") && baseUrl
         ? (() => {
             try {
               return new URL(baseUrl).hostname;
@@ -166,6 +225,13 @@ export function AiProviderSetup({
       method: result.method ?? "api_key",
       mode: ownership === "shared" ? "shared" : "delegated",
       ...result,
+    }, {
+      vendorId: vendorPreset?.id,
+      protocol: vendorProtocol,
+      models: models
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean),
     });
   };
   const save = useMutation({
@@ -175,10 +241,10 @@ export function AiProviderSetup({
         aiProviderRoutingSchema.parse({
           kind: provider,
           protocol: provider === "bedrock" ? "bedrock" : protocol,
-          auth: provider === "openrouter" ? "bearer" : auth,
+          auth: provider === "openrouter" ? "bearer" : effectiveAuth,
           ...(provider === "bedrock"
             ? { region }
-            : provider === "gateway" || provider === "local"
+            : provider === "gateway" || provider === "local" || provider === "openai_compatible"
               ? { baseUrl }
               : {}),
           models: models
@@ -198,7 +264,7 @@ export function AiProviderSetup({
           agentIds: [...agentIds],
           connectionId: reconnect?.id,
           routing,
-          ...(auth !== "none" ? { apiKey } : {}),
+          ...(effectiveAuth !== "none" ? { apiKey } : {}),
         }),
       );
     },
@@ -210,31 +276,63 @@ export function AiProviderSetup({
   const choices = (advancedOnly: boolean) => (
     <ConnectionChoiceList
       choices={providers
+        .filter((p) => !vendorOnly || "presetId" in p)
         .filter((p) => Boolean("advanced" in p && p.advanced) === advancedOnly)
-        .map((p) => ({
-          ...p,
-          icon:
-            p.id === "gateway" || p.id === "local" ? (
-              <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
-                {p.id === "gateway" ? (
-                  <Network className="size-5" />
-                ) : (
-                  <Monitor className="size-5" />
-                )}
-              </span>
-            ) : (
-              <AppLogo name={p.name} brandKey={p.id} />
-            ),
-        }))}
+        .map((p) => {
+          const preset = "presetId" in p ? aiVendorPreset(p.presetId) : undefined;
+          return {
+            ...p,
+            icon:
+              p.id === "gateway" || p.id === "local" ? (
+                <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
+                  {p.id === "gateway" ? (
+                    <Network className="size-5" />
+                  ) : (
+                    <Monitor className="size-5" />
+                  )}
+                </span>
+              ) : (
+                <AppLogo name={p.name} brandKey={preset?.brandKey ?? p.id} />
+              ),
+          };
+        })}
       onSelect={(id) => {
-        setProvider(id as ProviderChoice);
-        setStep("connect");
+        const selectedPreset = id.startsWith("vendor:")
+          ? aiVendorPreset(id.slice("vendor:".length))
+          : undefined;
+        save.reset();
         setApiKey("");
         setAuth("bearer");
-        save.reset();
+        if (selectedPreset) {
+          const nextProtocol = presetProtocol(selectedPreset);
+          setProvider("openai_compatible");
+          setVendorPresetId(selectedPreset.id);
+          setProtocol(nextProtocol);
+          setBaseUrl(selectedPreset.endpoints[nextProtocol]);
+          setModels(selectedPreset.models.join(", "));
+          setStep("connect");
+          return;
+        }
+        setVendorPresetId(null);
+        setProvider(id as ProviderChoice);
+        setModels("");
+        setStep("connect");
       }}
     />
   );
+  const selectProtocol = (next: AiProviderRouting["protocol"]) => {
+    setProtocol(next);
+    if (next !== "messages" && auth === "api_key") setAuth("bearer");
+    // A vendor's two surfaces live on different base URLs; follow the chosen format when the
+    // board has not replaced the preset URL with something custom.
+    if (vendorPreset && (next === "chat" || next === "messages")) {
+      const endpoints = vendorPreset.endpoints;
+      const otherEndpoint = next === "messages" ? endpoints.chat : endpoints.messages;
+      if (!baseUrl.trim() || baseUrl.trim().replace(/\/+$/, "") === otherEndpoint) {
+        setBaseUrl(endpoints[next]);
+      }
+    }
+  };
   const modelSettings = (
     <label className="block space-y-2 text-xs text-muted-foreground">
       Model IDs (comma separated)
@@ -255,9 +353,9 @@ export function AiProviderSetup({
       companyId={companyId}
       extra={advanced ? modelSettings : undefined}
       agents={agents.data ?? []}
-      sentence={connectionDefaultSummarySentence({ grantKind: ownership === "shared" ? "organization" : "user", authKind: auth === "none" ? "none" : "api_key", installChoice: allAgents ? "all" : "specific", installCount: agentIds.size })}
+      sentence={connectionDefaultSummarySentence({ grantKind: ownership === "shared" ? "organization" : "user", authKind: effectiveAuth === "none" ? "none" : "api_key", installChoice: allAgents ? "all" : "specific", installCount: agentIds.size })}
       capabilities={{ canCreateOrganizationGrant: canManageConnections, canSetCompanyInstall: canManageConnections }}
-      authKind={auth === "none" ? "none" : "api_key"}
+      authKind={effectiveAuth === "none" ? "none" : "api_key"}
       grantKind={ownership === "shared" ? "organization" : "user"}
       grantKinds={["user", "organization"]}
       setGrantKind={kind => setOwnership(kind === "organization" ? "shared" : "personal")}
@@ -269,7 +367,10 @@ export function AiProviderSetup({
       notice={!canManageConnections ? ["Only a connection manager can share this credential with everyone or give every agent access."] : undefined}
     />
   ) : undefined;
-  const cancel = () => reconnect || initialProvider ? onCancel() : setStep("provider");
+  // A host that opened this sheet as its own screen (vendor-only) has nowhere
+  // to return to inside it, so Back leaves rather than stepping back to the
+  // card list it was the only way to reach in the first place.
+  const cancel = () => vendorOnly || reconnect || initialProvider ? onCancel() : setStep("provider");
   if (!reconnect && accounts.isPending) return <p role="status">Loading connection permissions…</p>;
   if (!reconnect && accounts.isError) return <p role="alert">Could not load connection permissions. <Button type="button" variant="ghost" onClick={() => void accounts.refetch()}>Retry</Button></p>;
   return (
@@ -286,12 +387,14 @@ export function AiProviderSetup({
         <>
           {advancedOnly ? choices(true) : <>
           {choices(false)}
-          <details>
-            <summary className="cursor-pointer text-sm text-muted-foreground">
-              Advanced providers
-            </summary>
-            <div className="pt-4">{choices(true)}</div>
-          </details>
+          {!vendorOnly && (
+            <details>
+              <summary className="cursor-pointer text-sm text-muted-foreground">
+                Advanced providers
+              </summary>
+              <div className="pt-4">{choices(true)}</div>
+            </details>
+          )}
           </>}
           <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel
@@ -323,7 +426,7 @@ export function AiProviderSetup({
             save.mutate();
           }}
         >
-          {(provider === "gateway" || provider === "local") && (
+          {(provider === "gateway" || provider === "local" || provider === "openai_compatible") && (
             <>
               <label className="block space-y-2 text-xs text-muted-foreground">
                 Provider URL
@@ -332,7 +435,11 @@ export function AiProviderSetup({
                   placeholder={
                     provider === "local"
                       ? "http://localhost:11434/v1"
-                      : "https://gateway.example.com/v1"
+                      : vendorPreset
+                        ? vendorPreset.endpoints[vendorProtocol ?? "chat"]
+                        : provider === "openai_compatible"
+                          ? "https://api.example.com/v1"
+                          : "https://gateway.example.com/v1"
                   }
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
@@ -343,26 +450,32 @@ export function AiProviderSetup({
                 API format
                 <Select
                   value={protocol}
-                  onValueChange={(v) => {
-                    setProtocol(v as typeof protocol);
-                    if (v !== "messages" && auth === "api_key")
-                      setAuth("bearer");
-                  }}
-                  disabled={Boolean(reconnect) || Boolean(initialProtocol)}
+                  onValueChange={(v) => selectProtocol(v as typeof protocol)}
+                  disabled={
+                    Boolean(reconnect) ||
+                    Boolean(initialProtocol) ||
+                    protocolOptions.length === 1
+                  }
                 >
                   <SelectTrigger aria-label="API format" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="responses">
-                      OpenAI Responses · Codex
-                    </SelectItem>
-                    <SelectItem value="messages">
-                      Anthropic Messages · Claude
-                    </SelectItem>
-                    <SelectItem value="chat">
-                      Chat Completions · OpenCode, Hermes
-                    </SelectItem>
+                    {protocolOptions.includes("chat") && (
+                      <SelectItem value="chat">
+                        Chat Completions · OpenCode, Hermes
+                      </SelectItem>
+                    )}
+                    {protocolOptions.includes("messages") && (provider === "openai_compatible" || provider === "local" || provider === "gateway") ? (
+                      <SelectItem value="messages">
+                        Anthropic Messages · Claude
+                      </SelectItem>
+                    ) : null}
+                    {provider !== "openai_compatible" && (
+                      <SelectItem value="responses">
+                        OpenAI Responses · Codex
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </label>
@@ -379,7 +492,21 @@ export function AiProviderSetup({
               />
             </label>
           )}
-          {provider !== "openrouter" && (
+          {vendorPreset && (
+            <p className="text-xs text-muted-foreground">
+              Sends {vendorProtocol === "messages" ? "Anthropic Messages with an x-api-key" : "OpenAI Chat Completions with a bearer token"}.
+              {" "}The vendor documents this credential as <code>{vendorPreset.envKey}</code>.{" "}
+              <a
+                href={vendorPreset.docsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                Provider setup guide
+              </a>
+            </p>
+          )}
+          {provider !== "openrouter" && !vendorPreset && (
             <label className="block space-y-2 text-xs text-muted-foreground">
               Authentication
               <Select
@@ -411,7 +538,7 @@ export function AiProviderSetup({
             </label>
           )}
           {
-            auth !== "none" && (
+            effectiveAuth !== "none" && (
               <label className="block space-y-2 text-xs text-muted-foreground">
                 API key
                 <Input
@@ -451,7 +578,7 @@ export function AiProviderSetup({
               disabled={
                 save.isPending || accounts.isPending || accounts.isError ||
                 (!reconnect && ownership === "shared" && !allAgents && agentIds.size === 0) ||
-                (auth !== "none" && !apiKey.trim())
+                (effectiveAuth !== "none" && !apiKey.trim())
               }
             >
               {save.isPending
