@@ -427,10 +427,10 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | 能力 | 文件 | 验证方式与结果 |
 |---|---|---|
 | 桌面运行时门禁 | `desktop/scripts/preflight-runtime.mjs` | `PASS runtime Node >= 24.11.0 — v24.22.0`；`PASS critical deps require() — 6 modules`；`PASS sharp native binding — libvips 8.18.7`；`runtime identity: node 24.22.0 / electron 44.9.2` |
-| 服务端 staging | `desktop/scripts/stage-server.mjs` | 打包 16 个 workspace 包 → `npm install` 643 包 → 补丁校验通过（`embedded-postgres patch: present`、`acpx@0.13.1 patch: present`、`platform postgres: initdb (PostgreSQL) 18.1`）；体积 1.5G → 裁掉 15,290 个 source map 后 1.4G |
+| 服务端 staging（按 arch 分树） | `desktop/scripts/stage-server.mjs` | 打包 16 个 workspace 包 → `npm install` 643 包 → 补丁校验通过（`embedded-postgres patch: present`、`acpx@0.13.1 patch: present`、`platform postgres: initdb (PostgreSQL) 18.1`）；体积 1.5G → 裁掉 15,290 个 source map 后 1.4G。原生 arch 落在 `.stage/server`，交叉 arch 落在 `.stage/server-<arch>`（`PAPERCLIP_SHELL_TARGET_ARCH=x64` + `npm install --cpu=x64 --os=darwin`），两树各 1.4G/1.6G |
 | 端到端探针 | `desktop/scripts/probe.mjs` | **7/7 通过**：`/api/health` 200（`0.3.1+0.git.12b3c7b`）→ SPA shell 8972B → `GET /api/companies` → `POST /api/companies`（写路径）→ WS 握手 → `POST /api/companies/:id/issues` → SIGTERM `exit=0` |
 | Electron 壳 | `desktop/src/main.ts`、`server-supervisor.ts`、`paths.ts`、`preload.ts` | `PAPERCLIP_DESKTOP_SMOKE=1 node scripts/dev.mjs` → `PASS smoke: ui mounted (rootChildren=1)`；单实例锁、优雅关闭、失败错误页、菜单（打开数据/日志目录、重启服务） |
-| macOS 安装包 | `desktop/electron-builder.yml`、`scripts/package.mjs` | `Paperclip-0.3.1-arm64.dmg`（585MB）；`hdiutil attach` 后直接运行 App → `server ready on http://127.0.0.1:3187` → `PASS smoke: ui mounted`；`server bundled (17 symlinks preserved)` |
+| macOS 安装包（arm64 + x64） | `desktop/electron-builder.yml`、`scripts/package.mjs` | `Paperclip-0.3.1-arm64.dmg`（585MB）与 `Paperclip-0.3.1-x64.dmg`（664MB）；两者均 `hdiutil attach` 后**从挂载卷直接运行** → `server ready on http://127.0.0.1:3187` → `PASS smoke: ui mounted (rootChildren=1)`；x64 包在 Apple Silicon 上经 Rosetta（`arch -x86_64`）运行通过；`server bundled (17 symlinks preserved)`；打包时自检包内 arch 与目标一致（`@embedded-postgres/darwin-{arm64,x64}`、`@img/sharp-darwin-{arm64,x64}`） |
 | 移动端（模式 A） | `mobile/capacitor.config.ts`、`www/index.html`、`scripts/doctor.mjs` | `doctor.mjs` 7/7；`cap add ios` / `cap add android` / `cap sync` 成功；390×844 移动视口端到端：连接页 → 跳转 `http://127.0.0.1:3188/` → UI 挂载 → 同源 `/api/health` 200（截图 `docs/evidence/mobile-mode-a.png`） |
 | 非侵入式 | — | `paperclip` 仓库 `git status --porcelain` **全程为空**；全部产物位于独立仓库 |
 
@@ -445,17 +445,19 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | 5 | —（未预见） | staging 后需手动执行 `@embedded-postgres/<platform>` 的 `hydrate-symlinks.js` | npm 跳过了该 optional 依赖的 postinstall，导致 ICU dylib 别名软链缺失，`initdb` 报 `Library not loaded: libicudata.77.dylib` |
 | 6 | `extraResources` 携带 server 树 | 打包脚本自行 `ditto` 复制 | electron-builder 默认忽略列表硬编码 `!**/node_modules/**`，会**静默丢弃** server 的运行时依赖（首次产物只有 111MB，缺 `node_modules`） |
 | 7 | `electron-builder --mac`（yml 内多 arch） | 每 arch 单独一轮 dir → copy → `--prepackaged` | `--prepackaged` 会忽略 arch 参数并展开 yml 的 arch 列表，导致 `-x64.dmg` 里装的其实是 arm64 包 |
+| 8 | 一棵 stage 树同时供两个 arch | 每 arch 一棵树（`.stage/server` / `.stage/server-x64`）+ 每 arch 独立 preflight | `sharp`、`@embedded-postgres/<platform>` 是单架构二进制，一棵树无法同时喂两个 arch；且 release/ 会累积多个 arch 的 app 目录，需按构建时间过滤，否则**旧 arch 的 app 会被注入新 arch 的 server 树** |
+| 9 | `PAPERCLIP_SHELL_SKIP_INSTALL=1` 复用时照常重跑补丁 | 复用树跳过 `applyBundledDependencyPatches` | 仓库 helper 用 `patch --forward`，当全部 hunk 已应用时退出码为 1（实测 `4 out of 4 hunks ignored`）而硬失败；复用树本就已打过补丁，改由既有的 marker 校验（`embedded-postgres patch: present`、`acpx@<ver> patch: present`）证明 |
 
 ### 12.3 已验证的关键风险（计划 §9 的实测结论）
 
 - **风险 1（Electron 内置 Node 版本）**：**不成立**。Electron 44.9.2 内置 Node **24.22.0** ≥ 24.11.0；`sharp` 的 N-API 产物与 `embedded-postgres` 在该运行时下均正常。兜底开关 `PAPERCLIP_DESKTOP_NODE_BIN` 保留但未启用。
 - **风险 2（pnpm patch 未生效）**：以另一路径规避（§12.2 #2），并**显式校验** `globalThis.process.env` 标记存在。
 - **风险 3（平台二进制缺失）**：通过构建后自检覆盖（`initdb --version` 必须成功，否则构建失败）。
-- **风险 5（包体过大）**：**成立且未解决**。App 1.7G / dmg 585MB，主要来自 agent 运行时二进制（`@openai` 258M、`@anthropic-ai` 208M、`@github` 146M、`@embedded-postgres` 145M、`opencode-darwin-arm64` 138M）。裁剪方案见 §12.4。
+- **风险 5（包体过大）**：**成立且未解决**。App 1.7G / dmg 585MB（arm64）、664MB（x64），主要来自 agent 运行时二进制（`@openai` 258M、`@anthropic-ai` 208M、`@github` 146M、`@embedded-postgres` 145M、`opencode-darwin-arm64` 138M）。裁剪方案见 §12.4。
 
 ### 12.4 未完成 / 后续（明确不在本轮范围内）
 
-1. **Windows / Linux 产物**：需在对应平台构建（平台二进制不可交叉打包）；`nsis` / `AppImage` 配置已就位。
+1. **Windows / Linux 产物**：需在对应平台构建（平台二进制不可交叉打包）；`nsis` / `AppImage` 配置已就位。（macOS **arm64 + x64 均已产出并验证**，见 §12.1。）
 2. **自动更新**：`electron-updater` 未接入，`latest.yml` 未生成。
 3. **代码签名与公证**：当前为未签名本地构建（`identity: null`）；发布需 Apple Developer ID + `notarytool`、Windows 代码签名证书。
 4. **包体裁剪**：按 adapter 拆分为可选下载（例如把 copilot/opencode/codex/claude 运行时做成按需安装），或首启下载；这是把 dmg 从 585MB 压到 ~200MB 的主要手段。
@@ -473,7 +475,19 @@ PAPERCLIP_REPO=~/pix/paperclip npm run stage        # 构建 ui+server，pack+in
 PAPERCLIP_REPO=~/pix/paperclip npm run preflight    # 运行时门禁
 PAPERCLIP_REPO=~/pix/paperclip npm run probe        # 端到端 7 项检查
 PAPERCLIP_DESKTOP_SMOKE=1 npm run dev               # 启动窗口并断言 UI 挂载
-PAPERCLIP_REPO=~/pix/paperclip npm run package:mac  # 产出 dmg
+PAPERCLIP_REPO=~/pix/paperclip npm run package:mac  # 产出当前 arch 的 dmg
+
+# 两个 arch 都出（各需一棵 stage 树，每棵约 1.5G）
+PAPERCLIP_SHELL_TARGET_ARCH=x64 PAPERCLIP_REPO=~/pix/paperclip npm run stage
+PAPERCLIP_REPO=~/pix/paperclip npm run package:mac:both   # -> release/Paperclip-0.3.1-{arm64,x64}.dmg
+
+# 已装好的树复跑 staging（省掉约 11 分钟的跨架构 npm install）
+PAPERCLIP_SHELL_SKIP_BUILD=1 PAPERCLIP_SHELL_SKIP_PACK=1 PAPERCLIP_SHELL_SKIP_INSTALL=1 \
+  PAPERCLIP_REPO=~/pix/paperclip npm run stage
+
+# 从挂载卷直接验证产物（x64 在 Apple Silicon 上走 Rosetta）
+hdiutil attach release/Paperclip-0.3.1-x64.dmg -nobrowse -readonly
+PAPERCLIP_DESKTOP_SMOKE=1 arch -x86_64 "/Volumes/Paperclip 0.3.1/Paperclip.app/Contents/MacOS/Paperclip"
 
 cd ~/pix/paperclip-shell/mobile
 npm install && npm run add:ios && npm run add:android && npm run sync
