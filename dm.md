@@ -297,7 +297,7 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | **M1 骨架 + dev 运行** | `main.ts`、`server-supervisor.ts`、`paths.ts`、`preload.ts` | ✅ **通过**：`PAPERCLIP_DESKTOP_SMOKE=1 node scripts/dev.mjs` → `PASS smoke: ui mounted (rootChildren=1)`；退出后无残留子进程 |
 | **M2 macOS 打包** | `electron-builder.yml` + `package.mjs` | ✅ **通过**：产出 `Paperclip-0.3.1-arm64.dmg`（585MB）；**挂载 dmg 直接运行其中的 App** → server 启动 → UI 挂载（`rootChildren=1`）；17 个 postgres dylib 别名软链在打包后保留 |
 | **M3 Win/Linux + 更新** | 目标配置 + updater | 🟡 **自动更新已实现并验证**（`src/updater.ts` + `scripts/verify-shell.mjs`）：`electron-updater` 接入 generic feed（`PAPERCLIP_DESKTOP_UPDATE_URL` 或打包时嵌入 `app-update.yml`），macOS 额外产出可被应用的 zip 产物（`Paperclip-0.3.1-arm64-mac.zip`），打包时生成 `release/latest-mac.yml`；`npm run verify` 对**打包产物**跑本地 HTTP feed，断言 `state=available`。⏳ **Win/Linux 产物仍未构建**（`nsis` / `AppImage` 配置就位，需在对应平台构建） |
-| **M4 打磨** | 错误页、托盘、关于、日志导出、视觉统一 | ✅ **通过**：启动失败错误页 + 日志落盘 + 菜单；**托盘**（菜单栏图标 + 状态 + 打开数据/日志目录、导出日志、重启服务、检查更新、退出）、**About 页**（壳版本 + 服务端版本 + 服务地址 + Electron/Chromium/Node + 更新状态 + 数据/日志目录）、**日志导出**（单文件 bundle：诊断头 + 日志目录全部文件，每文件上限 5MB）全部实现；**外壳边框统一**（主窗口/加载/错误/About 共用同一 1px 内描边与底色）与**启动动画**（绘制纸夹、旋转光环、极光背景、阶段连接线、确定进度条、减弱动态适配）已实现，均通过脚本断言 + 截图复核（见 §12.1） |
+| **M4 打磨** | 错误页、托盘、关于、日志导出、视觉统一 | ✅ **通过**：启动失败错误页 + 日志落盘 + 菜单；**托盘**（菜单栏图标 + 状态 + 打开数据/日志目录、导出日志、重启服务、检查更新、退出）、**About 页**（壳版本 + 服务端版本 + 服务地址 + Electron/Chromium/Node + 更新状态 + 数据/日志目录）、**日志导出**（单文件 bundle：诊断头 + 日志目录全部文件，每文件上限 5MB）全部实现；**无边框一体化 chrome**（macOS `hiddenInset` + 30px 拖拽带，红绿灯嵌入应用顶部，无分隔线）与**启动动画**（绘制纸夹、旋转光环、极光背景、阶段连接线、确定进度条、减弱动态适配）已实现，均通过脚本断言 + 截图复核（见 §12.1） |
 
 ---
 
@@ -438,7 +438,7 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | 移动端（模式 A） | `mobile/capacitor.config.ts`、`www/index.html`、`scripts/doctor.mjs` | `doctor.mjs` 7/7；`cap add ios` / `cap add android` / `cap sync` 成功；390×844 移动视口端到端：连接页 → 跳转 `http://127.0.0.1:3188/` → UI 挂载 → 同源 `/api/health` 200（截图 `docs/evidence/mobile-mode-a.png`） |
 | **托盘 + 关于页 + 日志导出** | `desktop/src/tray.ts`、`about.ts`、`logs.ts`、`main.ts` | 在**打包产物**上跑 `npm run verify` → `PASS: tray: present and reflects the running server — phase=running server=http://127.0.0.1:3187`；`PASS: about: window renders version and server info — version=0.3.1 server=0.3.1+0.git.5d1b066`（About 窗口同时列出 Electron/Chromium/Node、更新状态、数据与日志目录）；`PASS: logs: export bundle written — …（1 files, 77267 bytes）`（诊断头 + 日志目录全部文件，每文件上限 5MB）；arm64 与 x64（Rosetta）产物**各 6/6 通过**（新增统一描边两项断言）；未打包形态 `npm run verify:dev` 亦 **6/6**（更新通道按预期为 `disabled`） |
 | **自动更新（electron-updater）** | `desktop/src/updater.ts`、`scripts/package.mjs`、`electron-builder.yml` | `PASS: updater: check reaches available — state=available Update available`：本地 HTTP 服务器用**打包产物本身**（`Paperclip-0.3.1-arm64-mac.zip` + `release/latest-mac.yml`，版本号临时抬到 99.0.0）充当 generic feed，`electron-updater` 真实拉取并判定「有新版本」；macOS 目标新增 `zip`（electron-updater 在 macOS 只能从 zip 应用更新），打包时生成 `release/latest-mac.yml`、配置 `PAPERCLIP_DESKTOP_UPDATE_URL` 时把 feed 嵌入 `Resources/app-update.yml`；未配置 feed 时更新保持**禁用**（自托管构建不指向别人的服务器），`autoDownload` 关闭 |
-| **外壳视觉统一 + 启动动画** | `desktop/src/theme.ts`、`loading-page.ts`、`about.ts`、`frame.ts`、`scripts/preview-shell.cjs` | **统一描边**：`SHELL_FRAME_CSS` 由 `installShellFrame` 在每个导航的 `dom-ready` 注入到服务端 UI（不改源码/DOM），加载/错误/About 页使用同一份 CSS；应用内断言 `PASS: frame: unified edge is present on the served UI — {"border":"1px","position":"fixed","pointer":"none"}`、`PASS: about: uses the same shell edge as the main window — borderTopWidth=1px`。**启动动画**：纸夹描边绘制、锥形光环旋转、双色极光漂移、网格/浮尘、阶段连接线填充、确定进度条 + 流光、渐变标题、卡片入场；`npm run preview` **12/12 通过**，并产出 `docs/evidence/loading-{env,migrate,ui}.png`、`loading-reduced-motion.png`、`shell-error.png`、`about.png`，逐张目视复核；`prefers-reduced-motion` 下断言浮尘层 `display:none`、动画关闭。真实窗口截图：`PAPERCLIP_DESKTOP_CAPTURE_DIR=… npm run verify:dev` → `docs/evidence/main-window.png`、`about-window.png` |
+| **无边框一体化 chrome + 启动动画** | `desktop/src/theme.ts`、`loading-page.ts`、`about.ts`、`frame.ts`、`scripts/preview-shell.cjs` | **一体化标题栏**：macOS 使用 `titleBarStyle: "hiddenInset"`（红绿灯直接浮在应用上），服务端 UI 注入 30px 顶部留白 + 透明拖拽带（`#paperclip-drag-strip`，从 x=80 开始以保留左上角 skip link 可点），**不再绘制任何视口描边**；加载/错误/About 使用同一套 `shellCss({ titleBarInset })`。应用内断言 `PASS: chrome: title bar is integrated with the app — {"dragbar":true,"paddingTop":"30px","seam":"0px"}`、`PASS: about: uses the same integrated chrome as the main window — {"dragbar":true,"paddingTop":"62px","seam":"0px"}`（`seam` 为 `body::after` 边框宽度，0px 证明没有独立分隔线）。**启动动画**：纸夹描边绘制、锥形光环旋转、双色极光漂移、网格/浮尘、阶段连接线填充、确定进度条 + 流光、渐变标题、卡片入场；`npm run preview` **13/13 通过**，并产出 `docs/evidence/loading-{env,migrate,ui}.png`、`loading-reduced-motion.png`、`shell-error.png`、`about.png`，逐张目视复核；`prefers-reduced-motion` 下断言浮尘层 `display:none`、动画关闭。真实窗口截图：`PAPERCLIP_DESKTOP_CAPTURE_DIR=… npm run verify:dev` → `docs/evidence/main-window.png`、`about-window.png`；并在真实窗口中目视确认红绿灯嵌入应用顶部、无标题栏接缝 |
 | **打包产物回归** | `desktop/scripts/*` | 本轮改动后重跑：`npm run probe` **7/7 通过**（`0.3.1+0.git.5d1b066`）；`PAPERCLIP_DESKTOP_SMOKE=1 npm run dev` → `PASS smoke: ui mounted (rootChildren=1)` 且退出后无残留进程；arm64 dmg（585MB）与 x64 dmg（664MB）重新产出，arm64 dmg 挂载后直接运行 → `PASS smoke: ui mounted (rootChildren=1)` |
 | 非侵入式 | — | `paperclip` 仓库 `git status --porcelain` **全程为空**（本轮仅按要求更新 `dm.md` 本身）；全部产物位于独立仓库 |
 
@@ -463,6 +463,7 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | 15 | 直接继承进程 `PATH` | 启动前用登录 shell（`$SHELL -ilc`）解析 PATH 并合并回退目录 | 从 Finder/Dock 启动的 app 只有 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`，服务端解析不到用户装的 agent CLI（`claude`、`codex` 等），报 `Command not found in PATH`；可用 `PAPERCLIP_DESKTOP_PATH` 覆盖 |
 | 16 | 更新通道由代码写死 | 由 `PAPERCLIP_DESKTOP_UPDATE_URL` / 打包时嵌入的 `app-update.yml` 决定 | 自托管构建不应把用户指向别人的服务器；未配置时更新保持禁用（菜单里给出原因） |
 | 17 | 验证脚本按「PASS 行数 / 退出码」判定 | 额外要求 app 自己打印 `[verify] N/M checks passed` | 壳在报告前崩溃（打包错误、启动崩溃）时退出码同样是 0，旧判定会给出「0 passed, 0 failed」却返回成功（实测过一次）；现在缺该汇总行即判失败 |
+| 18 | 用统一 1px 内描边把外壳“框”起来 | 改为 `titleBarStyle: "hiddenInset"` + 30px 顶部拖拽带，并**移除所有视口描边** | 实测 1px 线正好落在原生标题栏下方，看起来像一个独立的框；用户要求顶部边框与界面融为一体（截图复核后确认无缝） |
 
 ### 12.3 已验证的关键风险（计划 §9 的实测结论）
 
@@ -506,7 +507,7 @@ hdiutil attach release/Paperclip-0.3.1-x64.dmg -nobrowse -readonly
 PAPERCLIP_DESKTOP_SMOKE=1 arch -x86_64 "/Volumes/Paperclip 0.3.1/Paperclip.app/Contents/MacOS/Paperclip"
 
 # 外壳页面预览（加载/错误/About + 减弱动态），截图写入 ../docs/evidence
-npm run preview               # -> 12/12 checks passed
+npm run preview               # -> 13/13 checks passed
 
 # 托盘 / 关于页 / 日志导出 / 更新通道 / 统一描边（在打包产物上跑；会起一个本地 feed 服务）
 npm run verify                # -> checks: 6 passed, 0 failed
