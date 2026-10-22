@@ -17,7 +17,7 @@
 | 新模块位置 | ✅ **已实现为独立仓库** `~/pix/paperclip-shell`（含 `desktop/`、`mobile/`），**不放在 paperclip 内**，可独立演进 |
 | 非侵入式验证 | ✅ 实现全过程 `paperclip` 仓库 `git status --porcelain` **为空**（连 `dm.md` 也已随你上一次提交进入仓库，本轮未再改动其他文件） |
 
-> **实现状态**：M0 / M1 / M2 / M5（模式 A）已实现并**真实验证通过**，详见 §12。计划中少数条目在实现时被替换（staging 方式、打包复制方式），原因与替代方案同样记录在 §12。
+> **实现状态**：M0 / M1 / M2 / M5（模式 A）已实现并**真实验证通过**；M3 的**自动更新**与 M4 的**托盘 / 关于页 / 日志导出**也已实现，并在**打包产物**上真实验证通过（4/4），详见 §12。计划中少数条目在实现时被替换（staging 方式、打包复制方式、更新通道形态等），原因与替代方案同样记录在 §12.2。
 
 ---
 
@@ -273,6 +273,8 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 - 发布产物：`Paperclip-<ver>-arm64.dmg` / `-x64.dmg` / `-x64.exe`(nsis) / `-x64.AppImage`、`-x64.deb` + `latest*.yml` 更新元数据。
 - 代码签名：macOS Developer ID + `notarytool`；Windows 需代码签名证书（否则 SmartScreen 警告）。**这是发布前必须由你提供凭据的环节**。
 
+> **实现说明（2026-10-22 补齐）**：`electron-updater` 已按 **generic feed** 接入（`desktop/src/updater.ts`）。feed 地址来自环境变量 `PAPERCLIP_DESKTOP_UPDATE_URL`，或打包时由 `scripts/package.mjs` 写入 `Resources/app-update.yml`；**两者都没有时更新保持禁用**（自托管构建不应把用户指向别人的服务器），菜单里会说明原因。`autoDownload` 关闭，更新必须由用户确认后才下载；`autoInstallOnAppQuit` 打开。macOS 额外产出 zip 产物（`Paperclip-<ver>-<arch>-mac.zip`），因为 electron-updater 在 macOS 只能从 zip 应用更新；打包时同时写出 `release/latest-mac.yml`（含 zip 与 dmg 的 sha512/size）。验证方式见 §12.1。
+
 ### 5.5 桌面端已知风险点
 
 | 风险 | 对策 |
@@ -294,8 +296,8 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | **M0 可行性探针（关键路径）** | `scripts/preflight-runtime.mjs` + `scripts/probe.mjs` | ✅ **通过（7/7）**：Node 24.22.0 ≥ 24.11.0；sharp/libvips 8.18.7 在该运行时加载成功；staged server 在 `ELECTRON_RUN_AS_NODE` 下启动，内嵌 PostgreSQL 集群初始化成功；`/api/health` 200（`0.3.1+0.git.12b3c7b`）；SPA shell 返回；建公司；WS `/api/companies/:id/events/ws` 握手；建 issue；SIGTERM 优雅退出 |
 | **M1 骨架 + dev 运行** | `main.ts`、`server-supervisor.ts`、`paths.ts`、`preload.ts` | ✅ **通过**：`PAPERCLIP_DESKTOP_SMOKE=1 node scripts/dev.mjs` → `PASS smoke: ui mounted (rootChildren=1)`；退出后无残留子进程 |
 | **M2 macOS 打包** | `electron-builder.yml` + `package.mjs` | ✅ **通过**：产出 `Paperclip-0.3.1-arm64.dmg`（585MB）；**挂载 dmg 直接运行其中的 App** → server 启动 → UI 挂载（`rootChildren=1`）；17 个 postgres dylib 别名软链在打包后保留 |
-| **M3 Win/Linux + 更新** | 目标配置 + updater | ⏳ 未实现（配置骨架已在 `electron-builder.yml`：`nsis` / `AppImage`；需在对应平台构建）。自动更新（electron-updater）未接入 |
-| **M4 打磨** | 错误页、托盘、关于、日志导出 | 🟡 部分：启动失败错误页 + 日志落盘 + 菜单（打开数据/日志目录、重启服务）已实现；托盘、关于页、日志导出未实现 |
+| **M3 Win/Linux + 更新** | 目标配置 + updater | 🟡 **自动更新已实现并验证**（`src/updater.ts` + `scripts/verify-shell.mjs`）：`electron-updater` 接入 generic feed（`PAPERCLIP_DESKTOP_UPDATE_URL` 或打包时嵌入 `app-update.yml`），macOS 额外产出可被应用的 zip 产物（`Paperclip-0.3.1-arm64-mac.zip`），打包时生成 `release/latest-mac.yml`；`npm run verify` 对**打包产物**跑本地 HTTP feed，断言 `state=available`。⏳ **Win/Linux 产物仍未构建**（`nsis` / `AppImage` 配置就位，需在对应平台构建） |
+| **M4 打磨** | 错误页、托盘、关于、日志导出 | ✅ **通过**：启动失败错误页 + 日志落盘 + 菜单；**托盘**（菜单栏图标 + 状态 + 打开数据/日志目录、导出日志、重启服务、检查更新、退出）、**About 页**（壳版本 + 服务端版本 + 服务地址 + Electron/Chromium/Node + 更新状态 + 数据/日志目录）、**日志导出**（单文件 bundle：诊断头 + 日志目录全部文件，每文件上限 5MB）全部实现，并在打包产物上断言通过（见 §12.1） |
 
 ---
 
@@ -372,6 +374,7 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | 桌面 dev | `pnpm --dir apps/desktop dev` | 窗口出现、`/api/health` 200 |
 | 桌面包 | 安装 dmg/nsis/AppImage 于**干净环境** | 首启可用；重启后数据保留；卸载不留残留进程 |
 | 进程卫生 | 关闭应用后 `pgrep -f 'server/dist/index.js'` | 无输出 |
+| 桌面壳功能（托盘/关于/日志导出/更新） | `cd desktop && npm run verify`（在**打包产物**上跑，本地 HTTP feed 供能） | `checks: 4 passed, 0 failed`；`npm run verify:dev` 形态下更新通道预期为 `disabled` |
 | 移动 | 真机 iOS + Android 冒烟（模式 A） | 见 M5 验收 |
 | 回归 | 现有 `pnpm test:run` 子集（server/ui 关键套件） | 与改动前一致（我们不改代码，应无差异） |
 
@@ -411,15 +414,16 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 ## 11. 结论
 
 - **最佳方案（已落地）**：独立仓库 `paperclip-shell` 内 `desktop/`（Electron 壳 + `ELECTRON_RUN_AS_NODE` 复用内置 Node 运行自包含 server + 复用 `server/ui-dist` 静态托管）与 `mobile/`（Capacitor，模式 A）。对 paperclip 仓库零改动。
-- **成功判据（已达成）**：paperclip `git status` 为空；`Paperclip-0.3.1-arm64.dmg` 可挂载运行并渲染真实 UI；移动端连接流程端到端通过。
-- **下一步**：M3（Win/Linux + 自动更新）、M4 收尾（托盘/关于）、M6（模式 B 离线壳）、以及 §12.4 的包体裁剪与签名发布。
+- **成功判据（已达成）**：paperclip `git status` 为空；`Paperclip-0.3.1-arm64.dmg` 可挂载运行并渲染真实 UI；移动端连接流程端到端通过；桌面壳的托盘 / 关于页 / 日志导出 / 更新通道在**打包产物**上断言通过（§12.1）。
+- **下一步**：M3 剩余的 Win/Linux 产物、M6（模式 B 离线壳）、以及 §12.4 的包体裁剪与签名发布。
 
 ---
 
 ## 12. 实现状态（Implementation Status）
 
 > 实现落点：**独立仓库 `~/pix/paperclip-shell`**（`desktop/`、`mobile/`、`docs/evidence/`）。
-> 验证时间：2026-10-21。paperclip 检出：`12b3c7b62`（`@paperclipai/server@0.3.1`）。
+> 验证时间：2026-10-21（§12.1 前六项）、2026-10-22（本轮补齐的托盘 / 关于页 / 日志导出 / 更新通道，§12.1 后三项）。
+> paperclip 检出：`5d1b066d8`（`@paperclipai/server@0.3.1`，服务端版本 `0.3.1+0.git.5d1b066`）。
 > 所有结论均来自实际执行输出，未通过项已明确标注。
 
 ### 12.1 已实现并通过真实验证
@@ -432,7 +436,10 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | Electron 壳 | `desktop/src/main.ts`、`server-supervisor.ts`、`paths.ts`、`preload.ts` | `PAPERCLIP_DESKTOP_SMOKE=1 node scripts/dev.mjs` → `PASS smoke: ui mounted (rootChildren=1)`；单实例锁、优雅关闭、失败错误页、菜单（打开数据/日志目录、重启服务） |
 | macOS 安装包（arm64 + x64） | `desktop/electron-builder.yml`、`scripts/package.mjs` | `Paperclip-0.3.1-arm64.dmg`（585MB）与 `Paperclip-0.3.1-x64.dmg`（664MB）；两者均 `hdiutil attach` 后**从挂载卷直接运行** → `server ready on http://127.0.0.1:3187` → `PASS smoke: ui mounted (rootChildren=1)`；x64 包在 Apple Silicon 上经 Rosetta（`arch -x86_64`）运行通过；`server bundled (17 symlinks preserved)`；打包时自检包内 arch 与目标一致（`@embedded-postgres/darwin-{arm64,x64}`、`@img/sharp-darwin-{arm64,x64}`） |
 | 移动端（模式 A） | `mobile/capacitor.config.ts`、`www/index.html`、`scripts/doctor.mjs` | `doctor.mjs` 7/7；`cap add ios` / `cap add android` / `cap sync` 成功；390×844 移动视口端到端：连接页 → 跳转 `http://127.0.0.1:3188/` → UI 挂载 → 同源 `/api/health` 200（截图 `docs/evidence/mobile-mode-a.png`） |
-| 非侵入式 | — | `paperclip` 仓库 `git status --porcelain` **全程为空**；全部产物位于独立仓库 |
+| **托盘 + 关于页 + 日志导出** | `desktop/src/tray.ts`、`about.ts`、`logs.ts`、`main.ts` | 在**打包产物**上跑 `npm run verify` → `PASS: tray: present and reflects the running server — phase=running server=http://127.0.0.1:3187`；`PASS: about: window renders version and server info — version=0.3.1 server=0.3.1+0.git.5d1b066`（About 窗口同时列出 Electron/Chromium/Node、更新状态、数据与日志目录）；`PASS: logs: export bundle written — …（1 files, 77267 bytes）`（诊断头 + 日志目录全部文件，每文件上限 5MB）；arm64 与 x64（Rosetta）产物**各 4/4 通过** |
+| **自动更新（electron-updater）** | `desktop/src/updater.ts`、`scripts/package.mjs`、`electron-builder.yml` | `PASS: updater: check reaches available — state=available Update available`：本地 HTTP 服务器用**打包产物本身**（`Paperclip-0.3.1-arm64-mac.zip` + `release/latest-mac.yml`，版本号临时抬到 99.0.0）充当 generic feed，`electron-updater` 真实拉取并判定「有新版本」；macOS 目标新增 `zip`（electron-updater 在 macOS 只能从 zip 应用更新），打包时生成 `release/latest-mac.yml`、配置 `PAPERCLIP_DESKTOP_UPDATE_URL` 时把 feed 嵌入 `Resources/app-update.yml`；未配置 feed 时更新保持**禁用**（自托管构建不指向别人的服务器），`autoDownload` 关闭 |
+| **打包产物回归** | `desktop/scripts/*` | 本轮改动后重跑：`npm run probe` **7/7 通过**（`0.3.1+0.git.5d1b066`）；`PAPERCLIP_DESKTOP_SMOKE=1 npm run dev` → `PASS smoke: ui mounted (rootChildren=1)` 且退出后无残留进程；arm64 dmg（585MB）与 x64 dmg（664MB）重新产出，arm64 dmg 挂载后直接运行 → `PASS smoke: ui mounted (rootChildren=1)` |
+| 非侵入式 | — | `paperclip` 仓库 `git status --porcelain` **全程为空**（本轮仅按要求更新 `dm.md` 本身）；全部产物位于独立仓库 |
 
 ### 12.2 实现中的偏差（计划 → 实际，含原因）
 
@@ -447,6 +454,13 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | 7 | `electron-builder --mac`（yml 内多 arch） | 每 arch 单独一轮 dir → copy → `--prepackaged` | `--prepackaged` 会忽略 arch 参数并展开 yml 的 arch 列表，导致 `-x64.dmg` 里装的其实是 arm64 包 |
 | 8 | 一棵 stage 树同时供两个 arch | 每 arch 一棵树（`.stage/server` / `.stage/server-x64`）+ 每 arch 独立 preflight | `sharp`、`@embedded-postgres/<platform>` 是单架构二进制，一棵树无法同时喂两个 arch；且 release/ 会累积多个 arch 的 app 目录，需按构建时间过滤，否则**旧 arch 的 app 会被注入新 arch 的 server 树** |
 | 9 | `PAPERCLIP_SHELL_SKIP_INSTALL=1` 复用时照常重跑补丁 | 复用树跳过 `applyBundledDependencyPatches` | 仓库 helper 用 `patch --forward`，当全部 hunk 已应用时退出码为 1（实测 `4 out of 4 hunks ignored`）而硬失败；复用树本就已打过补丁，改由既有的 marker 校验（`embedded-postgres patch: present`、`acpx@<ver> patch: present`）证明 |
+| 10 | macOS 只产出 dmg | dmg **+ zip**（`Paperclip-<ver>-<arch>-mac.zip`） | electron-updater 在 macOS 只能从 zip 应用更新；dmg 仍是用户手动安装的产物 |
+| 11 | 托盘图标直接用 app 图标 | 单独的模板图 `build/trayTemplate.png`（由 `build/tray.svg` 生成，作为 extraResource 打进 `Resources/`） | 菜单栏模板图必须是「黑像素 + alpha」的 16/32pt 配对，用彩色 app 图标在深色/浅色菜单栏下都不可读 |
+| 12 | 图标生成脚本每个图标新建一个窗口 | `scripts/make-icons.cjs` 复用同一个窗口 | Electron 中「销毁后新建第二个 BrowserWindow」会让后续所有 `loadURL(data:…)` 失败（`ERR_FAILED (-2)`），托盘图标因此一直生成不出来 |
+| 13 | 直接打包 `electron-updater` | esbuild 加 banner 注入 `createRequire` | `electron-updater` 及其 `fs-extra` 依赖链是 CommonJS 且用动态 `require("fs")`，打进 ESM 主进程会抛 `Dynamic require of "fs" is not supported` |
+| 14 | staging 只复制 `server/` 下的技能 | 同时复制仓库根的 `skills/` 与 `skills-releases/` | 服务端从 `<serverRoot>/skills`（仓库根目录，不是 `server/`）读取内置技能，缺失时公司技能目录为空，agent 选择内置技能报 `Invalid company skill selection (unknown references: paperclipai/…)` |
+| 15 | 直接继承进程 `PATH` | 启动前用登录 shell（`$SHELL -ilc`）解析 PATH 并合并回退目录 | 从 Finder/Dock 启动的 app 只有 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`，服务端解析不到用户装的 agent CLI（`claude`、`codex` 等），报 `Command not found in PATH`；可用 `PAPERCLIP_DESKTOP_PATH` 覆盖 |
+| 16 | 更新通道由代码写死 | 由 `PAPERCLIP_DESKTOP_UPDATE_URL` / 打包时嵌入的 `app-update.yml` 决定 | 自托管构建不应把用户指向别人的服务器；未配置时更新保持禁用（菜单里给出原因） |
 
 ### 12.3 已验证的关键风险（计划 §9 的实测结论）
 
@@ -458,13 +472,13 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 ### 12.4 未完成 / 后续（明确不在本轮范围内）
 
 1. **Windows / Linux 产物**：需在对应平台构建（平台二进制不可交叉打包）；`nsis` / `AppImage` 配置已就位。（macOS **arm64 + x64 均已产出并验证**，见 §12.1。）
-2. **自动更新**：`electron-updater` 未接入，`latest.yml` 未生成。
+2. **更新的“真实发布”环节**：更新通道本身已实现并验证（§12.1），但仍需 ①一个实际托管 feed 的地址（`PAPERCLIP_DESKTOP_UPDATE_URL` 或 `app-update.yml`）；②签名与公证（见下条）；③Windows/Linux 的对应 yml（`latest.yml` / `latest-linux.yml`）随对应平台产物一起生成。
 3. **代码签名与公证**：当前为未签名本地构建（`identity: null`）；发布需 Apple Developer ID + `notarytool`、Windows 代码签名证书。
 4. **包体裁剪**：按 adapter 拆分为可选下载（例如把 copilot/opencode/codex/claude 运行时做成按需安装），或首启下载；这是把 dmg 从 585MB 压到 ~200MB 的主要手段。
 5. **移动端真机**：iOS 需 Xcode 签名（`pod install` / 归档），Android 需 Android SDK；当前仅验证到 `cap sync` + WebView 级端到端。
 6. **移动端原生能力**：15 个插件已安装并同步，但尚未在 UI 中调用（模式 A 下 UI 不做改动，插件能力需模式 B 或后续接入）。
-7. **首次启动迁移耗时**：首次启动需应用 353 个迁移（实测内嵌 Postgres 集群初始化 + 迁移可接受），仍建议加进度提示。
-8. **托盘 / 关于页 / 日志导出**（M4 剩余项）。
+7. **首次启动迁移耗时**：首次启动需应用 353 个迁移（实测内嵌 Postgres 集群初始化 + 迁移可接受），启动页已按 server 日志分阶段显示进度，仍建议加更细的百分比。
+8. ~~托盘 / 关于页 / 日志导出~~ → **已实现并验证**（§12.1）。
 
 ### 12.5 复现命令
 
@@ -488,6 +502,14 @@ PAPERCLIP_SHELL_SKIP_BUILD=1 PAPERCLIP_SHELL_SKIP_PACK=1 PAPERCLIP_SHELL_SKIP_IN
 # 从挂载卷直接验证产物（x64 在 Apple Silicon 上走 Rosetta）
 hdiutil attach release/Paperclip-0.3.1-x64.dmg -nobrowse -readonly
 PAPERCLIP_DESKTOP_SMOKE=1 arch -x86_64 "/Volumes/Paperclip 0.3.1/Paperclip.app/Contents/MacOS/Paperclip"
+
+# 托盘 / 关于页 / 日志导出 / 更新通道（在打包产物上跑；会起一个本地 feed 服务）
+npm run verify                # -> checks: 4 passed, 0 failed
+npm run verify:dev            # 未打包形态：更新通道预期为 disabled
+PAPERCLIP_VERIFY_APP="$PWD/release/mac/Paperclip.app/Contents/MacOS/Paperclip" npm run verify   # 验证 x64 产物
+
+# 产出带更新通道的产物（会写 release/latest-mac.yml 并把 feed 嵌入 app-update.yml）
+PAPERCLIP_DESKTOP_UPDATE_URL=https://paperclip.example.com/updates npm run package:mac
 
 cd ~/pix/paperclip-shell/mobile
 npm install && npm run add:ios && npm run add:android && npm run sync
