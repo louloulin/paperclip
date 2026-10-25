@@ -422,7 +422,7 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 ## 12. 实现状态（Implementation Status）
 
 > 实现落点：**独立仓库 `~/pix/paperclip-shell`**（`desktop/`、`mobile/`、`docs/evidence/`）。
-> 验证时间：2026-10-21（§12.1 前六项）、2026-10-22（本轮补齐的托盘 / 关于页 / 日志导出 / 更新通道，§12.1 后三项）。
+> 验证时间：2026-10-21（§12.1 前六项）、2026-10-22（本轮补齐的托盘 / 关于页 / 日志导出 / 更新通道，§12.1 后三项）、2026-10-25（**真实 dmg 打包**：`package:mac:both` 产出双架构安装包，并从挂载卷直接运行 + 真实发送消息复验）。
 > paperclip 检出：`5d1b066d8`（`@paperclipai/server@0.3.1`，服务端版本 `0.3.1+0.git.5d1b066`）。
 > 所有结论均来自实际执行输出，未通过项已明确标注。
 
@@ -434,14 +434,15 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 | 服务端 staging（按 arch 分树） | `desktop/scripts/stage-server.mjs` | 打包 16 个 workspace 包 → `npm install` 643 包 → 补丁校验通过（`embedded-postgres patch: present`、`acpx@0.13.1 patch: present`、`platform postgres: initdb (PostgreSQL) 18.1`）；体积 1.5G → 裁掉 15,290 个 source map 后 1.4G。原生 arch 落在 `.stage/server`，交叉 arch 落在 `.stage/server-<arch>`（`PAPERCLIP_SHELL_TARGET_ARCH=x64` + `npm install --cpu=x64 --os=darwin`），两树各 1.4G/1.6G |
 | 端到端探针 | `desktop/scripts/probe.mjs` | **8/8 通过**：`/api/health` 200（`0.3.1+0.git.12b3c7b`）→ SPA shell 8972B → `GET /api/companies` → `POST /api/companies`（写路径）→ WS 握手 → `POST /api/companies/:id/issues` → **空环境子进程（agent directory probe 形状）** → SIGTERM `exit=0` |
 | Electron 壳 | `desktop/src/main.ts`、`server-supervisor.ts`、`paths.ts`、`preload.ts` | `PAPERCLIP_DESKTOP_SMOKE=1 node scripts/dev.mjs` → `PASS smoke: ui mounted (rootChildren=1)`；单实例锁、优雅关闭、失败错误页、菜单（打开数据/日志目录、重启服务） |
-| macOS 安装包（arm64 + x64） | `desktop/electron-builder.yml`、`scripts/package.mjs` | `Paperclip-0.3.1-arm64.dmg`（585MB）与 `Paperclip-0.3.1-x64.dmg`（664MB）；两者均 `hdiutil attach` 后**从挂载卷直接运行** → `server ready on http://127.0.0.1:3187` → `PASS smoke: ui mounted (rootChildren=1)`；x64 包在 Apple Silicon 上经 Rosetta（`arch -x86_64`）运行通过；`server bundled (17 symlinks preserved)`；打包时自检包内 arch 与目标一致（`@embedded-postgres/darwin-{arm64,x64}`、`@img/sharp-darwin-{arm64,x64}`） |
+| macOS 安装包（arm64 + x64） | `desktop/electron-builder.yml`、`scripts/package.mjs` | **2026-10-25 真实产物**：`Paperclip-0.3.1-arm64.dmg` 614,356,500 B（586 MB，sha256 `72d5404f…`）、`Paperclip-0.3.1-x64.dmg` 697,263,866 B（665 MB，sha256 `c5ae163c…`）；同轮附带 electron-updater 所需 zip：`Paperclip-0.3.1-arm64-mac.zip` 640,278,272 B、`Paperclip-0.3.1-mac.zip` 723,470,733 B，以及各自 `.blockmap`。两者均 `hdiutil attach -nobrowse -readonly` 后**从挂载卷直接运行** → `server ready on http://127.0.0.1:3187` → `PASS smoke: ui mounted (rootChildren=1, href=http://127.0.0.1:3187/)`；x64 包在 Apple Silicon 上经 Rosetta（`arch -x86_64`）运行通过；挂载卷内 `Paperclip.app/Contents/MacOS/Paperclip` 经 `file` 确认为 `Mach-O 64-bit executable arm64` / `x86_64`，`Resources/server` 内含完整 `dist` + `node_modules` + `ui-dist` + `skills` 树；`server bundled (17 symlinks preserved)`；打包时自检包内 arch 与目标一致（`@embedded-postgres/darwin-{arm64,x64}`、`@img/sharp-darwin-{arm64,x64}`） |
 | 移动端（模式 A） | `mobile/capacitor.config.ts`、`www/index.html`、`scripts/doctor.mjs` | `doctor.mjs` 7/7；`cap add ios` / `cap add android` / `cap sync` 成功；390×844 移动视口端到端：连接页 → 跳转 `http://127.0.0.1:3188/` → UI 挂载 → 同源 `/api/health` 200（截图 `docs/evidence/mobile-mode-a.png`） |
 | **托盘 + 关于页 + 日志导出** | `desktop/src/tray.ts`、`about.ts`、`logs.ts`、`main.ts` | 在**打包产物**上跑 `npm run verify` → `PASS: tray: present and reflects the running server — phase=running server=http://127.0.0.1:3187`；`PASS: about: window renders version and server info — version=0.3.1 server=0.3.1+0.git.5d1b066`（About 窗口同时列出 Electron/Chromium/Node、更新状态、数据与日志目录）；`PASS: logs: export bundle written — …（1 files, 77267 bytes）`（诊断头 + 日志目录全部文件，每文件上限 5MB）；arm64 与 x64（Rosetta）产物**各 7/7 通过**（新增标题栏一体化与视口高度两项断言）；未打包形态 `npm run verify:dev` 亦 **7/7**（更新通道按预期为 `disabled`） |
 | **自动更新（electron-updater）** | `desktop/src/updater.ts`、`scripts/package.mjs`、`electron-builder.yml` | `PASS: updater: check reaches available — state=available Update available`：本地 HTTP 服务器用**打包产物本身**（`Paperclip-0.3.1-arm64-mac.zip` + `release/latest-mac.yml`，版本号临时抬到 99.0.0）充当 generic feed，`electron-updater` 真实拉取并判定「有新版本」；macOS 目标新增 `zip`（electron-updater 在 macOS 只能从 zip 应用更新），打包时生成 `release/latest-mac.yml`、配置 `PAPERCLIP_DESKTOP_UPDATE_URL` 时把 feed 嵌入 `Resources/app-update.yml`；未配置 feed 时更新保持**禁用**（自托管构建不指向别人的服务器），`autoDownload` 关闭 |
 | **无边框一体化 chrome + 启动动画** | `desktop/src/theme.ts`、`loading-page.ts`、`about.ts`、`frame.ts`、`scripts/preview-shell.cjs` | **一体化标题栏**：macOS 使用 `titleBarStyle: "hiddenInset"`（红绿灯直接浮在应用上），服务端 UI 注入 30px 顶部留白 + 透明拖拽带（`#paperclip-drag-strip`，从 x=80 开始以保留左上角 skip link 可点），**不再绘制任何视口描边**；加载/错误/About 使用同一套 `shellCss({ titleBarInset })`。应用内断言 `PASS: chrome: title bar is integrated with the app — {"dragbar":true,"paddingTop":"30px","seam":"0px"}`、`PASS: about: uses the same integrated chrome as the main window — {"dragbar":true,"paddingTop":"62px","seam":"0px"}`（`seam` 为 `body::after` 边框宽度，0px 证明没有独立分隔线）。**启动动画**：纸夹描边绘制、锥形光环旋转、双色极光漂移、网格/浮尘、阶段连接线填充、确定进度条 + 流光、渐变标题、卡片入场；`npm run preview` **13/13 通过**，并产出 `docs/evidence/loading-{env,migrate,ui}.png`、`loading-reduced-motion.png`、`shell-error.png`、`about.png`，逐张目视复核；`prefers-reduced-motion` 下断言浮尘层 `display:none`、动画关闭。真实窗口截图：`PAPERCLIP_DESKTOP_CAPTURE_DIR=… npm run verify:dev` → `docs/evidence/main-window.png`、`about-window.png`；并在真实窗口中目视确认红绿灯嵌入应用顶部、无标题栏接缝 |
-| **打包产物回归** | `desktop/scripts/*` | 本轮改动后重跑：`npm run probe` **8/8 通过**（`0.3.1+0.git.5d1b066`）；`PAPERCLIP_DESKTOP_SMOKE=1 npm run dev` → `PASS smoke: ui mounted (rootChildren=1)` 且退出后无残留进程；arm64 dmg（585MB）与 x64 dmg（664MB）重新产出，arm64 dmg 挂载后直接运行 → `PASS smoke: ui mounted (rootChildren=1)` |
+| **打包产物回归** | `desktop/scripts/*` | 2026-10-25 真实打包轮：`npm run package:mac:both` → 双架构 dmg + zip + blockmap 全部产出（见上一行）；**从挂载卷**对两个安装包各跑一次完整 `npm run verify`（`PAPERCLIP_VERIFY_APP` 指向挂载卷内的可执行文件，x64 经 `arch -x86_64`）→ **各 7/7 通过**（标题栏一体化、视口不裁底、托盘、About、日志导出、更新通道、新版式断言）；打包后重跑 `npm run probe` **8/8 通过**（`0.3.1+0.git.5d1b066`，含空环境子进程）、`npm run preview` **13/13 通过**；退出后无残留进程（`pgrep -fl "pcp-arm64" / "dist/index.js" / "claude-agent-acp"` 均空），两个挂载卷已 `hdiutil detach` |
+| **安装包内真实发消息** | `desktop/src/server-bootstrap.ts`、`node-shim.ts` | 在**挂载卷内的 arm64 安装包**（非 dev 形态）里通过 CDP 真实点击发送一条消息 → 消息出现在任务时间线、`/api/issues/LM-1/runs` 返回 `status=running`、`errorCode=null`，acpx 会话持续输出 `acpx.status session updated`，服务端 `[acpx] spawning agent: /private/tmp/pcp-arm64/…/node_modules/.bin/claude-agent-acp`（**从安装包内**拉起 agent）；整个 server.log 中 `Unable to find Electron app` 计数 **0**；安装包写出的 node shim 用 `env -i`（空环境，正是 agent directory probe 的形状）直接执行 → `node 24.22.0`。截图中任务详情页底部输入框完整可见（视口修正生效） |
 | **视口高度修正（底部裁切）** | `desktop/src/frame.ts`、`theme.ts` | 应用用视口单位（`h-dvh`/`min-h-dvh`/`max-h-dvh` 与 `--sz-*` 变量）撑满**整个窗口**，而 30px 标题栏带把可用区压到 870px → 整页比容器高 30px，`body overflow:clip` 裁掉底部（任务详情页的输入框整条不见）。现由 `installShellFrame` 在 `dom-ready` 同时做两件事：① 覆盖三个 Tailwind 视口工具类；② 从样式表**源码**读出 `:root` 上所有含 `vh/dvh` 的自定义属性并改写为 `calc(Ndvh - N×band)`（比例长度按比例扣减，保持语义）。断言 `PASS: layout: the inset viewport fits without clipping the bottom — {"innerHeight":900,"rootBottom":900,"docScrollHeight":900}` |
-| **空环境子进程（发送消息报错）** | `desktop/src/server-bootstrap.ts`、`node-shim.ts`、`scripts/node-shim.mjs` | 服务端用 `process.execPath` 拉子进程，agent directory probe 更是**清空环境**（`env: {}`）以免泄漏凭据 → `ELECTRON_RUN_AS_NODE` 丢失 → 子进程以 GUI 模式启动，报 `Unable to find Electron app at …`，**发消息必失败**。修法：服务端改为经 `server-bootstrap.cjs` 启动，bootstrap 把 `process.execPath` 指向一个 shim（`ELECTRON_RUN_AS_NODE=1 exec <Electron> "$@"`），shim 自己设标志位，**与子进程拿到的环境无关**。probe 新增第 8 步复现同形状调用（`env: {}` + `-e`）：`PASS empty-env child spawn (agent directory probe shape) — node=24.22.0`；端到端实测：真实 app 内发消息 → run `status=running`、acpx 会话持续更新、server.log 中 `Unable to find Electron app` 计数 **0** |
+| **空环境子进程（发送消息报错）** | `desktop/src/server-bootstrap.ts`、`node-shim.ts`、`scripts/node-shim.mjs` | 服务端用 `process.execPath` 拉子进程，agent directory probe 更是**清空环境**（`env: {}`）以免泄漏凭据 → `ELECTRON_RUN_AS_NODE` 丢失 → 子进程以 GUI 模式启动，报 `Unable to find Electron app at …`，**发消息必失败**。修法：服务端改为经 `server-bootstrap.cjs` 启动，bootstrap 把 `process.execPath` 指向一个 shim（`ELECTRON_RUN_AS_NODE=1 exec <Electron> "$@"`），shim 自己设标志位，**与子进程拿到的环境无关**。probe 新增第 8 步复现同形状调用（`env: {}` + `-e`）：`PASS empty-env child spawn (agent directory probe shape) — node=24.22.0`；端到端实测：真实 app 内发消息 → run `status=running`、acpx 会话持续更新、server.log 中 `Unable to find Electron app` 计数 **0**（2026-10-25 在**安装包形态**上复验一次，见「安装包内真实发消息」行） |
 | 非侵入式 | — | `paperclip` 仓库 `git status --porcelain` **全程为空**（本轮仅按要求更新 `dm.md` 本身）；全部产物位于独立仓库 |
 
 ### 12.2 实现中的偏差（计划 → 实际，含原因）
@@ -474,14 +475,14 @@ node apps/desktop/scripts/preflight-runtime.mjs                 # M0 门禁：No
 - **风险 1（Electron 内置 Node 版本）**：**不成立**。Electron 44.9.2 内置 Node **24.22.0** ≥ 24.11.0；`sharp` 的 N-API 产物与 `embedded-postgres` 在该运行时下均正常。兜底开关 `PAPERCLIP_DESKTOP_NODE_BIN` 保留但未启用。
 - **风险 2（pnpm patch 未生效）**：以另一路径规避（§12.2 #2），并**显式校验** `globalThis.process.env` 标记存在。
 - **风险 3（平台二进制缺失）**：通过构建后自检覆盖（`initdb --version` 必须成功，否则构建失败）。
-- **风险 5（包体过大）**：**成立且未解决**。App 1.7G / dmg 585MB（arm64）、664MB（x64），主要来自 agent 运行时二进制（`@openai` 258M、`@anthropic-ai` 208M、`@github` 146M、`@embedded-postgres` 145M、`opencode-darwin-arm64` 138M）。裁剪方案见 §12.4。
+- **风险 5（包体过大）**：**成立且未解决**。App 1.7G / dmg 586MB（arm64，614,356,500 B）、665MB（x64，697,263,866 B），主要来自 agent 运行时二进制（`@openai` 258M、`@anthropic-ai` 208M、`@github` 146M、`@embedded-postgres` 145M、`opencode-darwin-arm64` 138M）。裁剪方案见 §12.4。
 
 ### 12.4 未完成 / 后续（明确不在本轮范围内）
 
 1. **Windows / Linux 产物**：需在对应平台构建（平台二进制不可交叉打包）；`nsis` / `AppImage` 配置已就位。（macOS **arm64 + x64 均已产出并验证**，见 §12.1。）
 2. **更新的“真实发布”环节**：更新通道本身已实现并验证（§12.1），但仍需 ①一个实际托管 feed 的地址（`PAPERCLIP_DESKTOP_UPDATE_URL` 或 `app-update.yml`）；②签名与公证（见下条）；③Windows/Linux 的对应 yml（`latest.yml` / `latest-linux.yml`）随对应平台产物一起生成。
 3. **代码签名与公证**：当前为未签名本地构建（`identity: null`）；发布需 Apple Developer ID + `notarytool`、Windows 代码签名证书。
-4. **包体裁剪**：按 adapter 拆分为可选下载（例如把 copilot/opencode/codex/claude 运行时做成按需安装），或首启下载；这是把 dmg 从 585MB 压到 ~200MB 的主要手段。
+4. **包体裁剪**：按 adapter 拆分为可选下载（例如把 copilot/opencode/codex/claude 运行时做成按需安装），或首启下载；这是把 dmg 从 586MB 压到 ~200MB 的主要手段。
 5. **移动端真机**：iOS 需 Xcode 签名（`pod install` / 归档），Android 需 Android SDK；当前仅验证到 `cap sync` + WebView 级端到端。
 6. **移动端原生能力**：15 个插件已安装并同步，但尚未在 UI 中调用（模式 A 下 UI 不做改动，插件能力需模式 B 或后续接入）。
 7. **首次启动迁移耗时**：首次启动需应用 353 个迁移（实测内嵌 Postgres 集群初始化 + 迁移可接受）。启动页现按 server 日志推进 5 个阶段，并显示确定进度条、阶段连接线与已用时；百分比仍是阶段级（8/26/52/78/94），未细分到单条迁移。
@@ -510,12 +511,22 @@ PAPERCLIP_SHELL_SKIP_BUILD=1 PAPERCLIP_SHELL_SKIP_PACK=1 PAPERCLIP_SHELL_SKIP_IN
 hdiutil attach release/Paperclip-0.3.1-x64.dmg -nobrowse -readonly
 PAPERCLIP_DESKTOP_SMOKE=1 arch -x86_64 "/Volumes/Paperclip 0.3.1/Paperclip.app/Contents/MacOS/Paperclip"
 
+# 对挂载卷内的安装包跑完整校验（两个 arch 各一次 → 各 7/7）
+hdiutil attach release/Paperclip-0.3.1-arm64.dmg -nobrowse -readonly -mountpoint /tmp/pcp-arm64
+PAPERCLIP_VERIFY_APP=/tmp/pcp-arm64/Paperclip.app/Contents/MacOS/Paperclip npm run verify
+
+hdiutil attach release/Paperclip-0.3.1-x64.dmg -nobrowse -readonly -mountpoint /tmp/pcp-x64
+printf '#!/bin/sh\nexec /usr/bin/arch -x86_64 "/tmp/pcp-x64/Paperclip.app/Contents/MacOS/Paperclip" "$@"\n' > /tmp/pcp-x64-run.sh
+chmod +x /tmp/pcp-x64-run.sh
+PAPERCLIP_VERIFY_APP=/tmp/pcp-x64-run.sh npm run verify
+hdiutil detach /tmp/pcp-arm64 && hdiutil detach /tmp/pcp-x64
+
 # 外壳页面预览（加载/错误/About + 减弱动态），截图写入 ../docs/evidence
 npm run preview               # -> 13/13 checks passed
 
 # 托盘 / 关于页 / 日志导出 / 更新通道 / 统一描边（在打包产物上跑；会起一个本地 feed 服务）
-npm run verify                # -> checks: 6 passed, 0 failed
-npm run verify:dev            # 未打包形态：更新通道预期为 disabled，同样 6/6
+npm run verify                # -> checks: 7 passed, 0 failed
+npm run verify:dev            # 未打包形态：更新通道预期为 disabled，同样 7/7
 PAPERCLIP_VERIFY_APP="$PWD/release/mac/Paperclip.app/Contents/MacOS/Paperclip" npm run verify   # 验证 x64 产物
 
 # 真实窗口截图（主窗口 + About），用于目视复核统一描边
