@@ -50,6 +50,11 @@ export const CONNECT_SOURCE_NAMES: Record<string, string> = {
   claude_local: "Claude",
   codex_local: "OpenAI",
   grok_local: "Grok",
+  gemini_local: "Gemini",
+  kimi_local: "Kimi",
+  opencode_local: "OpenCode",
+  pi_local: "Pi",
+  cursor: "Cursor",
 };
 
 /** The provider name for a source, falling back to the type when unlisted. */

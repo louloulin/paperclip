@@ -38,6 +38,38 @@ export function managedProviderRouting(
       env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
       env.CLAUDE_CODE_SUBAGENT_MODEL = model;
     }
+  } else if (harness === "pi_local") {
+    // Pi has no base-URL flag: the only way to point it at a routed endpoint is
+    // a models.json provider entry. Pi names models as `provider/model`, so a
+    // managed connection lives under the `paperclip` provider. OpenRouter keeps
+    // Pi's built-in provider (and its `openrouter/` IDs) instead.
+    const routedModel = aiRoutingModel(route, harness, model);
+    if (route.kind === "openrouter") {
+      env.OPENROUTER_API_KEY = credential;
+      config.model = routedModel;
+    } else {
+      const provider = "paperclip";
+      const modelId = routedModel.startsWith(`${provider}/`)
+        ? routedModel.slice(provider.length + 1)
+        : routedModel;
+      // Keep the credential available to the adoption probe without making Pi
+      // read it back out of the JSON; the JSON carries it for the run.
+      env.PAPERCLIP_AI_PROVIDER_KEY = credential;
+      // PAPERCLIP_PI_PROVIDERS carries the providers map itself; the adapter
+      // wraps it as `{ providers }` when it writes models.json.
+      env.PAPERCLIP_PI_PROVIDERS = JSON.stringify({
+        [provider]: {
+          baseUrl,
+          ...(route.auth === "none" ? {} : { apiKey: credential }),
+          api:
+            route.protocol === "messages"
+              ? "anthropic-messages"
+              : "openai-completions",
+          models: modelId ? [{ id: modelId, name: modelId }] : [],
+        },
+      });
+      config.model = routedModel;
+    }
   } else if (harness === "opencode_local") {
     const provider = route.kind === "openrouter" ? "openrouter" : "paperclip";
     if (route.kind === "openrouter") env.OPENROUTER_API_KEY = credential;

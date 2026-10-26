@@ -33,6 +33,10 @@ export function aiProviderForAdapter(
       claude_local: "anthropic",
       codex_local: "openai",
       opencode_local: "openrouter",
+      // Pi is provider-agnostic. OpenRouter is the one key that reaches the
+      // widest model set without a custom endpoint, so it owns the quick
+      // connect path; other providers stay reachable from Advanced providers.
+      pi_local: "openrouter",
       grok_local: "xai",
       gemini_local: "google",
       hermes_local: "openrouter",
@@ -213,6 +217,17 @@ export function AiConnectionField({
             companyId={companyId} agentId={agentId} environmentId={environmentId}
             advancedOnly={preferAdvanced}
             initialProtocol={adapterType === "claude_local" ? "messages" : adapterType === "codex_local" ? "responses" : "chat"}
+            // The harness decides which wire formats can actually run. Pi
+            // speaks both; OpenCode only Chat Completions.
+            protocols={
+              adapterType === "claude_local"
+                ? ["messages"]
+                : adapterType === "pi_local"
+                  ? ["chat", "messages"]
+                  : adapterType === "opencode_local" || adapterType === "hermes_local"
+                    ? ["chat"]
+                    : undefined
+            }
             onCancel={() => preferAdvanced ? setConnecting(false) : setAdvancedSetup(false)}
             onComplete={binding => {
               void client.invalidateQueries({ queryKey: ["ai-connections", companyId] });

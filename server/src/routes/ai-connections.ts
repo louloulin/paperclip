@@ -1,5 +1,5 @@
-import { validateAiApiKey } from "../services/ai-api-key-test.js";
-export { validateAiApiKey } from "../services/ai-api-key-test.js";
+import { validateAiApiKey, validateAiVendorRoutingApiKey } from "../services/ai-api-key-test.js";
+export { validateAiApiKey, validateAiVendorRoutingApiKey } from "../services/ai-api-key-test.js";
 import { supportsLocalAiLogin } from "../services/local-ai-login-policy.js";
 import { localAiLoginService } from "../services/local-ai-login.js";
 import { z } from "zod";
@@ -305,7 +305,11 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
       const attemptStartedAt = new Date();
       // Custom destinations are exercised in the selected execution environment,
       // never fetched by the control plane (including localhost/private URLs).
+      // A shipped vendor preset (MiniMax, DeepSeek, …) names a fixed vendor
+      // host, so its key is verified here too — the cheap check the environment
+      // test later relies on instead of a full CLI hello probe.
       if (!input.routing || input.routing.kind === "openrouter") await validateAiApiKey(input.provider, input.apiKey!);
+      else if (input.apiKey) await validateAiVendorRoutingApiKey(input.routing, input.apiKey);
       const result = await service.save(
         companyId,
         userId,

@@ -214,6 +214,24 @@ describe("buildInvocationEnvForLogs", () => {
       "env OPENAI_API_KEY=***REDACTED*** PAPERCLIP_API_KEY='***REDACTED***' custom-acp --paperclip-api-key=***REDACTED*** --token ***REDACTED***",
     );
   });
+
+  it("redacts composite config values that embed a provider credential", () => {
+    const loggedEnv = buildInvocationEnvForLogs({
+      SAFE_VALUE: "visible",
+      PAPERCLIP_PI_PROVIDERS: JSON.stringify({
+        paperclip: { baseUrl: "https://api.minimax.cn/anthropic", apiKey: "mm-secret" },
+      }),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({
+        provider: { paperclip: { options: { apiKey: "sk-secret" } } },
+      }),
+      OPENCODE_AUTH_JSON: JSON.stringify({ openrouter: { key: "or-secret" } }),
+    });
+
+    expect(loggedEnv.SAFE_VALUE).toBe("visible");
+    expect(loggedEnv.PAPERCLIP_PI_PROVIDERS).toBe("***REDACTED***");
+    expect(loggedEnv.OPENCODE_CONFIG_CONTENT).toBe("***REDACTED***");
+    expect(loggedEnv.OPENCODE_AUTH_JSON).toBe("***REDACTED***");
+  });
 });
 
 describe("sanitizeSshRemoteEnv", () => {

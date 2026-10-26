@@ -2031,6 +2031,74 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       return { root, queryClient };
     }
 
+    it("offers Pi behind More harnesses and hires it with an explicit provider/model", async () => {
+      mockAdapterRegistry.list = [
+        { type: "claude_local" },
+        { type: "codex_local" },
+        { type: "pi_local" },
+      ];
+      mockAgentsApi.getAdapterAuthSignal.mockResolvedValue({ status: "absent" });
+      const { root } = await openStep4({ adapterType: "claude_local" });
+
+      const radios = () => [...document.body.querySelectorAll('[role="radio"]')];
+      expect(
+        radios().some((tile) => /Pi/.test(tile.textContent ?? "")),
+        "Pi should stay off the recommended row",
+      ).toBe(false);
+
+      const more = [...document.body.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "More harnesses",
+      );
+      expect(more, "the step should offer more harnesses").toBeTruthy();
+      await act(async () => {
+        more!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      for (let i = 0; i < 3; i++) await flushReact();
+
+      await pickSource(/Pi/);
+      expect(document.body.textContent).toContain("Provide your Pi API key");
+
+      const keyField = document.body.querySelector(
+        'input[aria-label="API key"]',
+      ) as HTMLInputElement;
+      const modelField = document.body.querySelector(
+        'input[aria-label="Model"]',
+      ) as HTMLInputElement;
+      expect(modelField, "Pi must ask for a model").toBeTruthy();
+      await act(async () => {
+        setControlledValue(keyField, "or-key");
+        setControlledValue(modelField, "openrouter/anthropic/claude-sonnet-4.5");
+      });
+      await flushReact();
+
+      await pressArcPrimary();
+
+      expect(mockAgentsApi.hire).toHaveBeenCalledTimes(1);
+      const hireBody = (mockAgentsApi.hire.mock.calls.at(-1) as unknown[])[1] as {
+        adapterType: string;
+        adapterConfig: { model?: string };
+      };
+      expect(hireBody.adapterType).toBe("pi_local");
+      // The suite stubs the adapter's config builder, so the model is asserted
+      // where it enters it rather than on the built object.
+      expect(mockAdapterBuild.buildAdapterConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          adapterType: "pi_local",
+          model: "openrouter/anthropic/claude-sonnet-4.5",
+        }),
+      );
+      expect(managedApi.create).toHaveBeenCalledWith(
+        "company-new",
+        expect.objectContaining({
+          provider: "openrouter",
+          method: "api_key",
+          apiKey: "or-key",
+        }),
+      );
+
+      await act(async () => root.unmount());
+    });
+
     it.each([
       ["claude_local", "anthropic", /Claude/, "claude-session-1", "claude-setup-token-status"],
       ["codex_local", "openai", /OpenAI/, "codex-session-1", "adapter-login-status"],

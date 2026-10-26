@@ -11,7 +11,7 @@ import { environmentRuntimeService } from "./environment-runtime.js";
 import { resolveEnvironmentExecutionTarget } from "./environment-execution-target.js";
 import { prepareManagedAiRuntime, assertManagedAiProjectAuth } from "./ai-connection-runtime.js";
 import { aiConnectionService } from "./ai-connections.js";
-import { validateAiApiKey } from "./ai-api-key-test.js";
+import { validateAiApiKey, validateAiVendorRoutingApiKey } from "./ai-api-key-test.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import { assertEnvironmentSelectionForCompany } from "./environment-selection.js";
 const asRecord = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -482,7 +482,7 @@ export function agentEnvironmentTestService(db: Db, pluginWorkerManager?: Plugin
   }
 
   async function probeManagedEnvironment(adapterType: string, context: Parameters<ReturnType<typeof requireServerAdapter>["testEnvironment"]>[0], binding: AiConnectionBinding) {
-    await assertManagedAiProjectAuth(context.config, binding.provider, context.executionTarget);
+    await assertManagedAiProjectAuth(context.config, binding.provider, context.executionTarget, adapterType);
     const result = await requireServerAdapter(adapterType).testEnvironment(context);
     if (result.status === "fail") return result;
     // The resolved method, not binding.method — on a responsible_user binding
@@ -515,8 +515,45 @@ export function agentEnvironmentTestService(db: Db, pluginWorkerManager?: Plugin
       }
       return result;
     }
+    // A vendor-preset routing (MiniMax, DeepSeek, …) is also an api_key account:
+    // one cheap endpoint call proves the key, endpoint, and model, while the CLI
+    // lane below spends a 45–90s CLI boot plus a full model round-trip to learn
+    // the same thing. Destinations outside the shipped presets keep the CLI
+    // probe — the control plane never fetches an arbitrary caller URL; it runs
+    // inside the execution environment instead.
+    if (resolvedMethod === "api_key" && context.config.managedAiRouting) {
+      const managedRouting = asRecord(context.config.managedAiRouting)!;
+      const env = parseObject(context.config.env);
+      // A Pi routing projects its key through PAPERCLIP_AI_PROVIDER_KEY on
+      // either surface, so the probe can verify a Message-surface vendor too.
+      const credentialKeys = managedRouting.protocol === "messages"
+        ? ["PAPERCLIP_AI_PROVIDER_KEY", managedRouting.auth === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"]
+        : ["PAPERCLIP_AI_PROVIDER_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"];
+      const routingKey = credentialKeys
+        .map((key) => env[key])
+        .find((value): value is string => typeof value === "string" && value.length > 0);
+      try {
+        if (!routingKey) throw unprocessable("The selected account's API key was not available to verify.");
+        const verified = await validateAiVendorRoutingApiKey(managedRouting, routingKey);
+        if (verified) {
+          result.checks.push({ code: "ai_connection_api_key_reverified", level: "info", message: "The provider verified this API key for adoption." });
+          return result;
+        }
+      } catch (error) {
+        result.status = "fail";
+        const rejected = error instanceof HttpError && asRecord(error.details)?.code === "ai_connection_api_key_rejected";
+        result.checks.push({ code: rejected ? "ai_connection_api_key_rejected" : "ai_connection_verification_failed", level: "error", message: error instanceof HttpError ? error.message : "Could not verify the account. Try again." });
+        return result;
+      }
+    }
     if (!result.checks.some(check => check.code.includes("hello_probe"))) {
-      const providerAdapter = context.config.managedAiRouting ? aiRoutingHarness(adapterType, context.config.provider, context.config.acpxAgent) : { anthropic: "claude_local", openai: "codex_local", openrouter: "opencode_local", xai: "grok_local", google: "gemini_local" }[binding.provider];
+      const providerAdapter = context.config.managedAiRouting
+        ? aiRoutingHarness(adapterType, context.config.provider, context.config.acpxAgent)
+        : adapterType === "pi_local"
+          // Pi carries every provider's key into its own harness; probing the
+          // provider's native CLI would test an executable this agent never runs.
+          ? "pi_local"
+          : { anthropic: "claude_local", openai: "codex_local", openrouter: "opencode_local", xai: "grok_local", google: "gemini_local" }[binding.provider];
       const probe = await requireServerAdapter(providerAdapter).testEnvironment({ ...context, adapterType: providerAdapter, config: { ...context.config, engine: "cli" } });
       result.checks.push(...probe.checks);
       result.status = probe.status === "fail" ? "fail" : result.status === "warn" || probe.status === "warn" ? "warn" : "pass";

@@ -23,11 +23,15 @@ The shared `AI_CONNECTION_CAPABILITIES` contract defines these combinations:
 
 | Provider | Sign-in method | Existing harness |
 | --- | --- | --- |
-| Claude / Anthropic | Claude subscription token or Anthropic API key | Claude |
-| OpenAI | ChatGPT/Codex subscription or OpenAI API key | Codex |
-| OpenRouter (legacy, no routing metadata) | API key | OpenCode, with an `openrouter/` model |
-| Google | API key | Gemini CLI |
-| Grok / xAI | Grok subscription or xAI API key | Grok |
+| Claude / Anthropic | Claude subscription token or Anthropic API key | Claude; API key also runs on Pi |
+| OpenAI | ChatGPT/Codex subscription or OpenAI API key | Codex; API key also runs on Pi |
+| OpenRouter (legacy, no routing metadata) | API key | OpenCode or Pi, with an `openrouter/` model |
+| Google | API key | Gemini CLI or Pi |
+| Grok / xAI | Grok subscription or xAI API key | Grok; API key also runs on Pi |
+
+Pi reads each provider's native key itself, so every `api_key` method lists it as
+a harness. Subscriptions stay with the provider's own CLI: a stored login is a
+file layout only that CLI reads.
 
 Native runner supports the corresponding existing Codex, OpenCode, and Claude
 ACP profiles. Connections creation and reconnect mount `AgentProviderConnection`,
@@ -38,6 +42,13 @@ browser sign-in presentation with a local login runner and require no sandbox.
 Environment selection does not change agent execution settings.
 API keys are validated against fixed provider endpoints; redirects
 and caller-supplied validation URLs are rejected.
+
+First-run onboarding offers Claude and Codex on its recommended row and the rest
+behind **More harnesses**: Pi, Gemini, Kimi, OpenCode, Cursor, and Grok. A harness
+with no browser sign-in (Pi, Gemini, Kimi, OpenCode, Cursor) opens the API-key
+card directly and hides the credential-mode switch, so the step never offers a
+sign-in it cannot complete. Pi has no default model, so its card asks for an
+explicit `provider/model` and the step will not advance without one.
 
 `runtimeConfig.aiConnection` contains `provider`, `mode`, and `method`. For responsible-user selections, `method` is a legacy wire hint retained for rolling upgrades; the resolver uses the selected account’s actual method:
 
@@ -610,12 +621,16 @@ Hermes (bearer). The catalog identity is the existing `messages-api` or
 provider, or subscription flow is required.
 
 First-run onboarding reaches the same presets from **Connect a model → Other
-providers**. That host is limited to the vendor cards and to the Claude wire
-format, because onboarding hires Claude and has no model picker to resolve a
-Chat Completions vendor's model. Completing it fixes the adapter to
-`claude_local`, takes the first suggested model ID for the agent, and hands the
-binding to the same environment test and hire a saved account uses. Picking a
-native source tile or switching credential mode clears the vendor connection.
+providers**. That host follows the harness the step has selected rather than
+always hiring Claude: Claude keeps the Messages surface, Pi takes either, and
+OpenCode takes Chat Completions. A harness that can run no preset (Gemini, Kimi,
+Cursor, Grok, Codex) hides the entry instead of offering a connection it cannot
+execute, and with no source picked yet the sheet keeps its original Claude
+Messages path. Completing it takes the first suggested model ID for the agent —
+prefixed with `paperclip/` for the harnesses that name models as
+`provider/model` — and hands the binding to the same environment test and hire a
+saved account uses. Picking a native source tile or switching credential mode
+clears the vendor connection.
 
 Each vendor publishes both surfaces from one key, so the API format select
 switches between them and follows the URL that belongs to the chosen format:
@@ -643,7 +658,20 @@ Presets receive no control-plane key check, exactly like other custom URLs:
 | Claude legacy and Claude New Runner (ACPX) | OpenRouter; custom/local Anthropic Messages; Bedrock API key |
 | OpenCode legacy and New Runner | OpenRouter; custom/local Chat Completions |
 | Hermes local | OpenRouter; custom/local Chat Completions |
+| Pi (local and ACPX `pi`) | OpenRouter; custom/local Anthropic Messages and Chat Completions |
 | Gemini CLI, Grok | Their native API connections; custom routes are not advertised |
+
+Pi has no base-URL flag, so a routed connection reaches it through
+`PAPERCLIP_PI_PROVIDERS`: a managed `models.json` provider entry under the
+`paperclip` provider (`api` is `anthropic-messages` for Messages and
+`openai-completions` for Chat Completions). Pi names models as
+`provider/model`, so a routed agent model is `paperclip/<id>`; a native
+OpenRouter account keeps Pi's built-in provider and `openrouter/<id>`. The run
+path writes the registry into a disposable `PI_CODING_AGENT_DIR` (and ships it
+into a remote environment), and the environment test materializes the same file
+so the hello turn resolves the configured model. The value embeds the provider
+key, so it is stripped from inherited env, redacted in session identities, and
+redacted by name in the invocation env written to run metadata.
 
 Migration `0306` adds Google to both account-default provider constraints. Local
 Gemini connections seed the API-key auth choice in their disposable home before
@@ -651,7 +679,7 @@ environment probes and task execution. The settings file contains no credential.
 
 OpenClaw Gateway, Hermes Gateway, Claude Managed, AWS AgentCore, Process, HTTP,
 and legacy `acpx_local` are excluded: external agents retain their own model
-configuration, and `acpx_local` is retired. Cursor/Pi/Copilot custom routing,
+configuration, and `acpx_local` is retired. Cursor/Copilot custom routing,
 Vertex, ambient AWS identity, arbitrary authentication headers, and automatic
 catalog discovery for custom gateways are not part of this implementation.
 

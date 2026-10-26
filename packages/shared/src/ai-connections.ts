@@ -79,7 +79,7 @@ export const AI_CONNECTION_CAPABILITIES: Record<
     >;
   }
 > = {
-  google: { name: "Google", methods: { api_key: { adapters: ["gemini_local"], envKey: "GEMINI_API_KEY" } } },
+  google: { name: "Google", methods: { api_key: { adapters: ["gemini_local", "pi_local"], envKey: "GEMINI_API_KEY" } } },
   anthropic: {
     name: "Claude",
     methods: {
@@ -87,27 +87,28 @@ export const AI_CONNECTION_CAPABILITIES: Record<
         adapters: ["claude_local"],
         envKey: "CLAUDE_CODE_OAUTH_TOKEN",
       },
-      api_key: { adapters: ["claude_local"], envKey: "ANTHROPIC_API_KEY" },
+      api_key: { adapters: ["claude_local", "pi_local"], envKey: "ANTHROPIC_API_KEY" },
     },
   },
   openai: {
     name: "OpenAI",
     methods: {
       subscription: { adapters: ["codex_local"], envKey: "CODEX_HOME" },
-      api_key: { adapters: ["codex_local"], envKey: "OPENAI_API_KEY" },
+      api_key: { adapters: ["codex_local", "pi_local"], envKey: "OPENAI_API_KEY" },
     },
   },
   openrouter: {
     name: "OpenRouter",
     methods: {
-      api_key: { adapters: ["opencode_local"], envKey: "OPENROUTER_API_KEY" },
+      api_key: { adapters: ["opencode_local", "pi_local"], envKey: "OPENROUTER_API_KEY" },
     },
   },
   xai: {
     name: "Grok",
     methods: {
       subscription: { adapters: ["grok_local"], envKey: "GROK_HOME" },
-      api_key: { adapters: ["grok_local"], envKey: "XAI_API_KEY" },
+      // Pi reads XAI_API_KEY for its built-in xAI provider.
+      api_key: { adapters: ["grok_local", "pi_local"], envKey: "XAI_API_KEY" },
     },
   },
 };
@@ -123,7 +124,7 @@ export function isAiConnectionCompatible(
   // A fixed binding contains identity only. The service checks authoritative
   // connection metadata before resolving credentials or running the harness.
   if ("mode" in requirement && requirement.mode !== "responsible_user" && requirement.method === "api_key")
-    return ["claude_local", "codex_local", "opencode_local", "hermes_local", "gemini_local", "grok_local"].includes(adapterType);
+    return ["claude_local", "codex_local", "opencode_local", "hermes_local", "gemini_local", "grok_local", "pi_local"].includes(adapterType);
   const methods = AI_CONNECTION_CAPABILITIES[requirement.provider].methods;
   const candidates = "mode" in requirement && requirement.mode === "responsible_user"
     ? Object.values(methods)

@@ -94,8 +94,10 @@ export function aiRoutingHarness(
   acpxAgent?: unknown,
 ): string {
   if (adapter !== "paperclip_runner") return adapter;
+  // Pi is also an ACPX agent, and its ACP path runs through the Pi harness.
   const runner =
-    provider === "acpx" && (acpxAgent === "claude" || acpxAgent === "grok")
+    provider === "acpx" &&
+    (acpxAgent === "claude" || acpxAgent === "grok" || acpxAgent === "pi")
       ? acpxAgent
       : provider;
   return (
@@ -105,6 +107,7 @@ export function aiRoutingHarness(
         codex: "codex_local",
         opencode: "opencode_local",
         grok: "grok_local",
+        pi: "pi_local",
       } as Record<string, string>
     )[String(runner)] ?? "unsupported"
   );
@@ -120,10 +123,14 @@ export function isAiRoutingCompatible(
       "codex_local",
       "opencode_local",
       "hermes_local",
+      "pi_local",
     ].includes(harness);
   if (route.protocol === "responses") return harness === "codex_local";
-  if (route.protocol === "messages") return harness === "claude_local";
-  return ["opencode_local", "hermes_local"].includes(harness);
+  // Pi speaks both surfaces: Anthropic Messages through its anthropic-messages
+  // provider entry, Chat Completions through openai-completions.
+  if (route.protocol === "messages")
+    return ["claude_local", "pi_local"].includes(harness);
+  return ["opencode_local", "hermes_local", "pi_local"].includes(harness);
 }
 export function aiRoutingBaseUrl(
   route: AiProviderRouting,
@@ -140,7 +147,11 @@ export function aiRoutingModel(
   harness: string,
   model: string,
 ): string {
-  if (!model || harness !== "opencode_local") return model;
+  if (!model) return model;
+  // OpenCode and Pi both name a model `provider/model`. A routed connection
+  // lives under the managed `paperclip` provider; an OpenRouter connection
+  // keeps the built-in provider and its `openrouter/` IDs.
+  if (harness !== "opencode_local" && harness !== "pi_local") return model;
   const prefix = route.kind === "openrouter" ? "openrouter" : "paperclip";
   return model.startsWith(`${prefix}/`) ? model : `${prefix}/${model}`;
 }

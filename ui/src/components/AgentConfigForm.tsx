@@ -175,7 +175,10 @@ const emptyOverlay: AgentConfigOverlay = {
 const EMPTY_ENV: Record<string, EnvBinding> = {};
 
 export function supportsAdapterModelRefresh(adapterType: string): boolean {
-  return adapterType === "claude_local" || adapterType === "codex_local" || adapterType === "paperclip_runner" || adapterType === "opencode_local";
+  // Pi discovers its list from `pi --list-models`, the same way OpenCode runs
+  // `opencode models`; without it a Pi agent could only be pointed at a model
+  // by typing the ID from memory.
+  return adapterType === "claude_local" || adapterType === "codex_local" || adapterType === "paperclip_runner" || adapterType === "opencode_local" || adapterType === "pi_local";
 }
 
 export function resolvePaperclipRunnerTransitionModel(

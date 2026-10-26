@@ -1,3 +1,4 @@
+import path from "node:path";
 import type {
   AdapterEnvironmentCheck,
   AdapterEnvironmentTestContext,
@@ -12,15 +13,19 @@ import {
   asStringArray,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
+  type AdapterExecutionTarget,
   ensureAdapterExecutionTargetCommandResolvable,
   maybeRunSandboxInstallCommand,
   ensureAdapterExecutionTargetDirectory,
   runAdapterExecutionTargetProcess,
+  runAdapterExecutionTargetShellCommand,
   describeAdapterExecutionTarget,
   resolveAdapterExecutionTargetCwd,
 } from "@paperclipai/adapter-utils/execution-target";
+import { shellQuote } from "@paperclipai/adapter-utils/ssh";
 import { discoverPiModelsCached } from "./models.js";
 import { parsePiJsonl } from "./parse.js";
+import { buildPiProviderConfig, preparePiRuntimeConfig } from "./runtime-config.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
@@ -78,6 +83,33 @@ function buildPiModelDiscoveryFailureCheck(message: string): AdapterEnvironmentC
   };
 }
 
+// Write the rendered models.json into a remote execution environment and point
+// Pi at it. A remote target cannot see a host temp dir, so the provider
+// registry is shipped as bytes into the environment itself — the same content
+// the run path materializes locally. Returns false when the environment could
+// not accept the file, so the caller can report the gap instead of pretending
+// the provider is configured.
+async function writeRemotePiProviderConfig(input: {
+  runId: string;
+  target: AdapterExecutionTarget;
+  dir: string;
+  content: string;
+  env: Record<string, string>;
+}): Promise<boolean> {
+  const marker = `PAPERCLIP_PI_EOF_${input.runId.replace(/[^A-Za-z0-9]/g, "")}`;
+  const file = path.posix.join(input.dir, "models.json");
+  const body = input.content.endsWith("\n") ? input.content : `${input.content}\n`;
+  // The registry carries the provider credential, so it is written owner-only.
+  const script = `mkdir -p ${shellQuote(input.dir)} && cat > ${shellQuote(file)} <<'${marker}'\n${body}${marker}\nchmod 600 ${shellQuote(file)} || true`;
+  const result = await runAdapterExecutionTargetShellCommand(input.runId, input.target, script, {
+    cwd: input.target.kind === "remote" ? input.target.remoteCwd : input.dir,
+    env: input.env,
+    timeoutSec: 30,
+  });
+  if (result.timedOut) return false;
+  return (result.exitCode ?? 1) === 0;
+}
+
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
 ): Promise<AdapterEnvironmentTestResult> {
@@ -124,6 +156,62 @@ export async function testEnvironment(
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
+  }
+  // A managed/custom provider lives in a models.json file, not an env var. The
+  // run path materializes it (see runtime-config.ts); the probe must see the
+  // same registry or `pi --list-models` and the hello turn would report every
+  // configured model as missing. A remote target cannot see a host temp dir, so
+  // the same file is shipped into the environment instead.
+  let preparedRuntimeConfig: Awaited<ReturnType<typeof preparePiRuntimeConfig>> | null = null;
+  let remoteProviderConfigDir: string | null = null;
+  if (env.PAPERCLIP_PI_PROVIDERS) {
+    const providerConfig = buildPiProviderConfig({ env });
+    checks.push(...providerConfig.notes.map((note) => ({
+      code: "pi_provider_config",
+      level: "info" as const,
+      message: note,
+    })));
+    if (providerConfig.content) {
+      if (!targetIsRemote) {
+        preparedRuntimeConfig = await preparePiRuntimeConfig({ env });
+        Object.assign(env, preparedRuntimeConfig.env);
+      } else {
+        // The registry lives inside the execution environment for the length of
+        // the probe; the run path ships its own copy.
+        const remoteDir = path.posix.join(cwd, `.paperclip-pi-agent-config-${runId}`);
+        try {
+          const written = await writeRemotePiProviderConfig({
+            runId,
+            target: target!,
+            dir: remoteDir,
+            content: providerConfig.content,
+            env,
+          });
+          if (written) {
+            remoteProviderConfigDir = remoteDir;
+            env.PI_CODING_AGENT_DIR = remoteDir;
+            checks.push({
+              code: "pi_provider_config_remote",
+              level: "info",
+              message: `Shipped the managed models.json into the environment at ${remoteDir}.`,
+            });
+          } else {
+            checks.push({
+              code: "pi_provider_config_remote_failed",
+              level: "warn",
+              message: "Could not write the managed models.json into the environment; the probe runs without the custom provider.",
+            });
+          }
+        } catch (err) {
+          checks.push({
+            code: "pi_provider_config_remote_failed",
+            level: "warn",
+            message: "Could not write the managed models.json into the environment; the probe runs without the custom provider.",
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
   }
   const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
 
@@ -327,6 +415,18 @@ export async function testEnvironment(
         hint: "Run `pi --mode json` manually in this working directory to debug.",
       });
     }
+  }
+
+  // The prepared registry is a probe-only artifact; the run materializes its
+  // own copy (and ships it for remote targets).
+  await preparedRuntimeConfig?.cleanup();
+  if (remoteProviderConfigDir && target) {
+    await runAdapterExecutionTargetShellCommand(
+      runId,
+      target,
+      `rm -rf ${shellQuote(remoteProviderConfigDir)}`,
+      { cwd, env, timeoutSec: 30 },
+    ).catch(() => undefined);
   }
 
   return {

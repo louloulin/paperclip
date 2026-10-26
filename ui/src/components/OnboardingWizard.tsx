@@ -8,7 +8,7 @@ import { useLocalAiLogin } from "./ai-connections/useLocalAiLogin";
 import { aiConnectionsApi } from "@/api/ai-connections";
 import { aiProviderForAdapter } from "./ai-connections/AiConnectionField";
 import { AiProviderSetup } from "./ai-connections/AiProviderSetup";
-import type { AiConnectionBinding } from "@paperclipai/shared";
+import type { AiConnectionBinding, AiVendorProtocol } from "@paperclipai/shared";
 import { storeProviderApiKey } from "../lib/provider-credential";
 import { SavedProviderKeySelect, useSavedProviderKeys } from "./onboarding/SavedProviderKeySelect";
 import { randomAgentAppearance, resolveAgentAppearance, agentAppearanceSchema } from "@paperclipai/shared";
@@ -158,6 +158,44 @@ const ONBOARDING_EXCLUDED_ADAPTER_TYPES = new Set([
   "paperclip_runner",
 ]);
 
+/**
+ * Harnesses this step offers behind "More harnesses".
+ *
+ * Curated rather than every non-recommended registry entry: each of these has a
+ * working onboarding path (an API-key credential and a default or explicit
+ * model), while entries such as the Hermes gateway or external plugin adapters
+ * need configuration this step does not collect. The row stays
+ * registry-driven — an adapter missing from the registry is simply not shown.
+ */
+const MORE_ONBOARDING_ADAPTER_TYPES = [
+  "pi_local",
+  "gemini_local",
+  "kimi_local",
+  "opencode_local",
+  "cursor",
+  "grok_local",
+] as const;
+
+/** Sources with no sign-in flow: their connect card is always an API key. */
+const API_ONLY_ADAPTER_TYPES = new Set([
+  "opencode_local",
+  "pi_local",
+  "gemini_local",
+  "kimi_local",
+  "cursor",
+]);
+
+/**
+ * Harnesses that can run a vendor-preset connection. The preset stores an
+ * Anthropic Messages or OpenAI Chat Completions endpoint, and only these
+ * harnesses speak one of them; the rest keep their own provider CLI.
+ */
+const VENDOR_CAPABLE_ADAPTER_TYPES = new Set([
+  "claude_local",
+  "pi_local",
+  "opencode_local",
+]);
+
 function restoreOnboardingAdapterType(savedAdapterType: unknown, provider?: unknown): AdapterType {
   if (savedAdapterType === "paperclip_runner" && (provider === undefined || provider === "codex")) return "codex_local";
   return typeof savedAdapterType === "string" && savedAdapterType !== "paperclip_runner"
@@ -254,6 +292,14 @@ const MODEL_SOURCE_INLINE_MARKS: Record<string, ComponentType<{ className?: stri
 const API_KEY_ENV_KEYS: Record<string, string> = {
   claude_local: ANTHROPIC_API_KEY_ENV_KEY,
   codex_local: "OPENAI_API_KEY",
+  // Pi and OpenCode connect through an AI account, so this key names the
+  // provider whose saved accounts the step lists for them.
+  pi_local: "OPENROUTER_API_KEY",
+  opencode_local: "OPENROUTER_API_KEY",
+  gemini_local: "GEMINI_API_KEY",
+  kimi_local: "KIMI_MODEL_API_KEY",
+  cursor: "CURSOR_API_KEY",
+  grok_local: "XAI_API_KEY",
 };
 
 function apiKeyEnvKeyFor(adapterType: string): string {
@@ -710,10 +756,14 @@ function OnboardingWizardInner({
     ? selectedSavedKey.id
     : savedKeys.options[0]?.id;
   const selectedApiKey = savedKeys.options.find((option) => option.id === selectedApiKeyId);
-  const credentialMode = credentialModeChoice ?? (
-    (savedKeys.subscriptions.length > 0 || (adapterType === "claude_local" && savedKeys.storedLogin.data))
-      ? "subscription" : savedKeys.options.length || adapterType === "opencode_local" ? "api" : "subscription"
-  );
+  // A harness with no sign-in flow has no subscription half; a choice made for
+  // the previous source must not strand it on a card it cannot fill.
+  const credentialMode = API_ONLY_ADAPTER_TYPES.has(adapterType)
+    ? "api"
+    : credentialModeChoice ?? (
+        (savedKeys.subscriptions.length > 0 || (adapterType === "claude_local" && savedKeys.storedLogin.data))
+          ? "subscription" : savedKeys.options.length ? "api" : "subscription"
+      );
   const [createdCompanyPrefix, setCreatedCompanyPrefix] = useState<
     string | null
   >((saved?.createdCompanyPrefix as string) ?? null);
@@ -774,6 +824,28 @@ function OnboardingWizardInner({
   const pendingVendorHireRef = useRef(false);
   const managedProvider = aiProviderForAdapter(adapterType);
   const managedSubscriptionProvider = managedProvider === "anthropic" || managedProvider === "openai" || managedProvider === "xai" ? managedProvider : undefined;
+  /**
+   * The harness a vendor-preset connection will run on.
+   *
+   * With no source picked the sheet keeps its original behavior (Claude and its
+   * Messages surface). Once a source is picked, the sheet follows it — Pi and
+   * OpenCode run the same preset through their own harness instead of silently
+   * hiring Claude. A picked harness that cannot run a preset hides the entry
+   * rather than offering a connection it cannot execute.
+   */
+  const vendorSheetAdapter = sourcePicked
+    ? VENDOR_CAPABLE_ADAPTER_TYPES.has(adapterType)
+      ? adapterType
+      : null
+    : "claude_local";
+  const vendorSheetProtocols: AiVendorProtocol[] =
+    vendorSheetAdapter === "claude_local"
+      ? ["messages"]
+      : vendorSheetAdapter === "pi_local"
+        ? ["chat", "messages"]
+        : ["chat"];
+  const vendorSheetInitialProtocol: AiVendorProtocol =
+    vendorSheetAdapter === "claude_local" ? "messages" : "chat";
   function managedBindingForStep(): AiConnectionBinding | undefined {
     if (vendorConnection) return vendorConnection.binding;
     if (credentialMode === "api") return selectedApiKey?.aiConnection ?? (
@@ -1168,7 +1240,7 @@ function OnboardingWizardInner({
   // Build adapter grids dynamically from the UI registry + display metadata.
   // External/plugin adapters automatically appear with generic defaults, and
   // server-disabled types are filtered out.
-  const { recommendedAdapters, moreAdapters } = useMemo(() => {
+  const { recommendedAdapters, moreAdapters, visibleAdapters } = useMemo(() => {
     const all = listUIAdapters()
       .filter((a) =>
         !ONBOARDING_EXCLUDED_ADAPTER_TYPES.has(a.type) &&
@@ -1179,7 +1251,15 @@ function OnboardingWizardInner({
 
     return {
       recommendedAdapters: all.filter((a) => a.recommended),
-      moreAdapters: all.filter((a) => !a.recommended),
+      moreAdapters: all.filter(
+        (a) =>
+          !a.recommended &&
+          (MORE_ONBOARDING_ADAPTER_TYPES as readonly string[]).includes(a.type),
+      ),
+      // The snap below must keep a saved adapter the registry still carries,
+      // even when this step has no tile for it; only a type that is gone should
+      // be replaced.
+      visibleAdapters: all,
     };
   }, [disabledTypes]);
 
@@ -1189,7 +1269,10 @@ function OnboardingWizardInner({
    * no longer offers — a selection the customer cannot see.
    */
   const sourceSelected =
-    sourcePicked && recommendedAdapters.some((opt) => opt.type === adapterType);
+    sourcePicked &&
+    [...recommendedAdapters, ...moreAdapters].some(
+      (opt) => opt.type === adapterType,
+    );
 
   /**
    * Whether the connect step may advance.
@@ -1208,7 +1291,13 @@ function OnboardingWizardInner({
    * Anything that gates this step belongs in here, so the next one is added
    * once rather than twice.
    */
-  const connectStepReady = sourceSelected && !adapterEnvLoading && !savedKeys.loading;
+  const connectStepReady =
+    sourceSelected &&
+    !adapterEnvLoading &&
+    !savedKeys.loading &&
+    // Pi has no default model: it needs an explicit `provider/model` before a
+    // run can resolve one, so the step cannot advance without it.
+    (adapterType !== "pi_local" || model.trim().length > 0);
 
   /**
    * Whether this step has a sign-in to do before it can hire.
@@ -1418,7 +1507,12 @@ function OnboardingWizardInner({
       ? // The vendor sheet owns its own Connect; the step's button waits behind it.
         { label: "Connect", icon: "arrow", disabled: true }
       : vendorConnection
-        ? { label: "Connect", icon: "arrow", disabled: loading }
+        ? // The hire behind a vendor connection runs the same environment test
+          // as any other source; it must read as progress, not as an idle
+          // "Connect" that appears to hang.
+          connectProgress
+          ? { label: adapterEnvLoading ? "Testing…" : connectProgress, icon: "spinner", disabled: true }
+          : { label: "Connect", icon: "arrow", disabled: loading }
         : connectProgress
       ? { label: adapterEnvLoading ? "Testing…" : connectProgress, icon: "spinner", disabled: true }
       : connectPhase === "waiting"
@@ -1468,6 +1562,26 @@ function OnboardingWizardInner({
     // during the collapse has no card to close and no room to give back.
     // With no card open, the row is the whole of the unwind.
     setConnectPhase(connectCardLive ? "unwindCard" : "unwindRow");
+  }
+
+  /**
+   * Answer the model-source question with a tile from either row.
+   *
+   * Both rows share this so a harness picked from "More harnesses" starts the
+   * same sequence as a recommended one — including clearing a vendor binding
+   * that named the previous source and resetting the codex-only runner.
+   */
+  function selectModelSource(id: string) {
+    if (connectPhase !== "idle") return;
+    autoConnectStartedRef.current = false;
+    setVendorConnection(null);
+    pendingVendorHireRef.current = false;
+    setSourcePicked(true);
+    setAdapterType(id);
+    if (id !== adapterType) setRunner("auto");
+    if (id === "opencode_local") setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
+    else if (id !== "codex_local") setModel("");
+    setConnectPhase("collapsing");
   }
 
   /**
@@ -1536,9 +1650,7 @@ function OnboardingWizardInner({
     // external adapter is indistinguishable from a disabled one - and snapping
     // would replace the customer's choice with a built-in and persist it.
     if (!adapterRegistryLoaded) return;
-    const visible = [...recommendedAdapters, ...moreAdapters].filter(
-      (a) => !a.comingSoon,
-    );
+    const visible = visibleAdapters.filter((a) => !a.comingSoon);
     if (visible.length === 0) return;
     if (visible.some((a) => a.type === adapterType)) return;
     const next = visible[0].type as AdapterType;
@@ -1569,7 +1681,7 @@ function OnboardingWizardInner({
       return;
     }
     setModel("");
-  }, [adapterRegistryLoaded, recommendedAdapters, moreAdapters, adapterType]);
+  }, [adapterRegistryLoaded, visibleAdapters, adapterType]);
 
   const COMMAND_PLACEHOLDERS: Record<string, string> = {
     claude_local: "claude",
@@ -2170,6 +2282,17 @@ function OnboardingWizardInner({
           return;
         }
       }
+      if (adapterType === "pi_local") {
+        // Pi resolves an explicit provider/model pair; a bare ID would be sent
+        // without `--provider` and could quietly select a different account.
+        const selectedModelId = model.trim();
+        if (!/^[^\s/]+\/\S+$/.test(selectedModelId)) {
+          setError(
+            "Pi requires an explicit model in provider/model format (for example openrouter/anthropic/claude-sonnet-4.5).",
+          );
+          return;
+        }
+      }
 
       // Onboarding applies a stored Claude subscription login automatically,
       // with no extra control. A new user who signs in, leaves, and returns
@@ -2762,23 +2885,31 @@ function OnboardingWizardInner({
               )}
 
               {/* Step 4: Connect a model — adapter + model + env check (capsule above) */}
-              {step === 4 && (vendorSetupOpen ? (
+              {step === 4 && (vendorSetupOpen && vendorSheetAdapter ? (
                 <motion.div key="step-4-vendor" {...stepContentMotion} exit={stepHandoff ? stepContentMotion.exit : undefined} className="space-y-8">
                   {createdCompanyId ? (
                     <AiProviderSetup
-                      key={createdCompanyId}
+                      key={`${createdCompanyId}:${vendorSheetAdapter}`}
                       companyId={createdCompanyId}
                       vendorOnly
-                      // The vendor's Claude-compatible surface is its documented
-                      // coding path, and Claude is the adapter this step hires.
-                      protocols={["messages"]}
-                      initialProtocol="messages"
+                      // The vendor's surfaces follow the harness that will run
+                      // them: Claude takes Messages, Pi takes either, OpenCode
+                      // takes Chat Completions.
+                      protocols={vendorSheetProtocols}
+                      initialProtocol={vendorSheetInitialProtocol}
                       onCancel={() => setVendorSetupOpen(false)}
                       onComplete={(binding, context) => {
-                        const nextModel = context?.models[0] ?? "";
+                        const first = context?.models[0] ?? "";
+                        // Pi and OpenCode name a routed model under the managed
+                        // `paperclip` provider.
+                        const nextModel = !first
+                          ? ""
+                          : vendorSheetAdapter === "claude_local"
+                            ? first
+                            : `paperclip/${first}`;
                         pendingVendorHireRef.current = true;
                         setVendorConnection({ binding, model: nextModel });
-                        setAdapterType("claude_local");
+                        setAdapterType(vendorSheetAdapter);
                         setModel(nextModel);
                         setSourcePicked(true);
                         setVendorSetupOpen(false);
@@ -2817,19 +2948,53 @@ function OnboardingWizardInner({
                       }
                       collapsed={connectCollapsed}
                       settling={connectPhase === "unwindRow"}
-                      onSelect={(id) => {
-                        if (connectPhase !== "idle") return;
-                        autoConnectStartedRef.current = false;
-                        setVendorConnection(null);
-                        pendingVendorHireRef.current = false;
-                        setSourcePicked(true);
-                        setAdapterType(id);
-                        if (id !== adapterType) setRunner("auto");
-                        if (id === "opencode_local") setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
-                        else if (id !== "codex_local") setModel("");
-                        setConnectPhase("collapsing");
-                      }}
+                      onSelect={selectModelSource}
                     />
+
+                    {/* More harnesses. Collapsed by default so the step still
+                        asks one question with the recommended row; expanding
+                        it lists the registry-backed adapters this step can
+                        actually credential and model. Hidden once a source is
+                        picked, when the row has finished answering. */}
+                    {!connectCollapsed && moreAdapters.length > 0 && (
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          aria-expanded={showMoreAdapters}
+                          onClick={() => setShowMoreAdapters((open) => !open)}
+                          className="cursor-pointer rounded-md px-1 py-1 text-sm font-medium text-muted-foreground underline decoration-muted-foreground/40 underline-offset-4 outline-none transition-colors hover:text-foreground hover:decoration-foreground/40 focus-visible:ring-ring/50 focus-visible:ring-(length:--rad-3)"
+                        >
+                          {showMoreAdapters ? "Fewer harnesses" : "More harnesses"}
+                        </button>
+                        {showMoreAdapters && (
+                          <div className="mt-2">
+                            <ModelSourceTiles
+                              label="More harnesses"
+                              sources={moreAdapters.map((opt) => ({
+                                id: opt.type,
+                                label: CONNECT_SOURCE_NAMES[opt.type] ?? opt.label,
+                                icon: <ModelSourceMark type={opt.type} Fallback={opt.icon} />,
+                                // A no-sign-in harness is reached with a key
+                                // whatever mode the row is currently in.
+                                ...(API_ONLY_ADAPTER_TYPES.has(opt.type)
+                                  ? { credentialMode: "api" as const }
+                                  : {}),
+                              }))}
+                              mode={credentialMode}
+                              selectedId={
+                                sourcePicked &&
+                                moreAdapters.some((opt) => opt.type === adapterType)
+                                  ? adapterType
+                                  : null
+                              }
+                              collapsed={connectCollapsed}
+                              settling={connectPhase === "unwindRow"}
+                              onSelect={selectModelSource}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Fades on the first beat but keeps its space until the
                         second, so pressing a tile moves nothing vertically.
@@ -2854,12 +3019,14 @@ function OnboardingWizardInner({
                       transition={{ opacity: SOURCE_LINK_EXIT, height: MAKE_ROOM }}
                     >
                       <div className="-ml-3 mt-1">
-                        <CredentialModeLink mode={credentialMode} onChange={(next) => {
-                          setVendorConnection(null);
-                          pendingVendorHireRef.current = false;
-                          setCredentialMode(next);
-                        }} />
-                        {createdCompanyId && !loading && (
+                        {!API_ONLY_ADAPTER_TYPES.has(adapterType) && (
+                          <CredentialModeLink mode={credentialMode} onChange={(next) => {
+                            setVendorConnection(null);
+                            pendingVendorHireRef.current = false;
+                            setCredentialMode(next);
+                          }} />
+                        )}
+                        {createdCompanyId && !loading && vendorSheetAdapter && (
                           <button
                             type="button"
                             onClick={() => setVendorSetupOpen(true)}
@@ -2940,6 +3107,16 @@ function OnboardingWizardInner({
                             setSelectedSavedKey(createdCompanyId ? { companyId: createdCompanyId, envKey: apiKeyEnvKeyFor(adapterType), id: "" } : null);
                             setApiKey(value);
                           }}
+                          onSubmit={() => handleConnectStepPrimary()}
+                        />}
+                        {adapterType === "pi_local" && <OnboardingCardField
+                          label="Model"
+                          // Pi has no default: it needs an explicit
+                          // provider/model, and the credential card is where
+                          // the rest of the source's configuration lives.
+                          placeholder="openrouter/anthropic/claude-sonnet-4.5"
+                          value={model}
+                          onChange={setModel}
                           onSubmit={() => handleConnectStepPrimary()}
                         />}
                       </OnboardingLoginCard>

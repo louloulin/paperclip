@@ -123,7 +123,11 @@ vi.mock("../services/ai-connection-runtime.js", async (importOriginal) => ({
   },
 }));
 const mockValidateAiApiKey = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock("../services/ai-api-key-test.js", () => ({ validateAiApiKey: mockValidateAiApiKey }));
+const mockValidateAiVendorRoutingApiKey = vi.hoisted(() => vi.fn(async () => false));
+vi.mock("../services/ai-api-key-test.js", () => ({
+  validateAiApiKey: mockValidateAiApiKey,
+  validateAiVendorRoutingApiKey: mockValidateAiVendorRoutingApiKey,
+}));
 const mockMarkAuthenticationFailed = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("../services/ai-connections.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/ai-connections.js")>()),
@@ -527,6 +531,55 @@ describe("agent test-environment route", () => {
       companyId: "company-1",
       attribution: expect.objectContaining({ connectionId: "conn-1", grantId: "grant-1" }),
     }));
+  });
+
+  // A vendor-preset routing (MiniMax, DeepSeek, …) is an api_key account on a
+  // fixed vendor host: one cheap endpoint call re-verifies it, so it must not
+  // pay the CLI lane's 45–90s boot-plus-round-trip hello probe either.
+  it("adopts a vendor-preset routing api_key connection through the cheap endpoint check, without a CLI hello probe", async () => {
+    mockManagedRuntime("api_key");
+    mockValidateAiVendorRoutingApiKey.mockResolvedValueOnce(true);
+    const { registerServerAdapter, getServerAdapter, unregisterServerAdapter } = await import("../adapters/index.js");
+    const previous = getServerAdapter("claude_local");
+    unregisterServerAdapter("claude_local");
+    const cliProbeSpy = vi.fn(async () => ({
+      adapterType: "claude_local",
+      status: "fail" as const,
+      checks: [{ code: "adapter_command_missing", level: "error" as const, message: 'Command not found in PATH: "claude"' }],
+      testedAt: new Date(0).toISOString(),
+    }));
+    registerServerAdapter({ ...externalAdapter, type: "claude_local", testEnvironment: cliProbeSpy });
+    try {
+      const app = await createApp();
+      const res = await request(app)
+        .post("/api/companies/company-1/adapters/external_test/test-environment")
+        .send({
+          adapterConfig: {
+            cwd: "/",
+            managedAiRouting: {
+              kind: "openai_compatible",
+              protocol: "messages",
+              auth: "api_key",
+              baseUrl: "https://api.minimax.cn/anthropic",
+              models: [{ id: "MiniMax-M3" }],
+            },
+          },
+          aiConnection: { provider: "anthropic", method: "api_key", mode: "responsible_user" },
+        });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body.status).toBe("pass");
+      expect(JSON.stringify(res.body)).not.toContain("ai_connection_validation_incomplete");
+      expect(res.body.checks.map((check: { code: string }) => check.code)).toContain("ai_connection_api_key_reverified");
+      expect(mockValidateAiVendorRoutingApiKey).toHaveBeenCalledWith(
+        expect.objectContaining({ baseUrl: "https://api.minimax.cn/anthropic" }),
+        "sk-ant-test-key",
+      );
+      expect(mockValidateAiApiKey).not.toHaveBeenCalled();
+      expect(cliProbeSpy).not.toHaveBeenCalled();
+    } finally {
+      unregisterServerAdapter("claude_local");
+      if (previous) registerServerAdapter(previous);
+    }
   });
 
   it("still fails subscription adoption when no hello probe can run", async () => {

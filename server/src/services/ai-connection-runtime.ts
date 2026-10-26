@@ -50,6 +50,7 @@ export const AI_AUTH_ENV_KEYS = [
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "PAPERCLIP_OPENCODE_PROVIDERS",
+  "PAPERCLIP_PI_PROVIDERS",
   "ANTHROPIC_BASE_URL",
   "OPENAI_BASE_URL",
   "XAI_BASE_URL",
@@ -80,6 +81,10 @@ export async function assertManagedAiProjectAuth(
   config: Record<string, unknown>,
   provider: AiConnectionBinding["provider"],
   target?: AdapterExecutionTarget | null,
+  // The harness that will run. Only Claude and Codex read project-level
+  // authentication files; a Pi (or any other) run would be refused for a file
+  // it never opens. Omitted callers keep the provider-based scan.
+  harness?: string,
 ) {
   const extraArgs = [
     ...(Array.isArray(config.extraArgs) ? config.extraArgs : []),
@@ -100,11 +105,17 @@ export async function assertManagedAiProjectAuth(
     );
   }
   const files =
-    provider === "anthropic"
+    harness === "claude_local"
       ? [".claude/settings.json", ".claude/settings.local.json"]
-      : provider === "openai"
+      : harness === "codex_local"
         ? [".codex/config.toml"]
-        : [];
+        : harness !== undefined
+          ? []
+          : provider === "anthropic"
+            ? [".claude/settings.json", ".claude/settings.local.json"]
+            : provider === "openai"
+              ? [".codex/config.toml"]
+              : [];
   const pattern =
     "apiKeyHelper|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|OPENAI_API_KEY|model_provider[[:space:]]*=|env_key[[:space:]]*=|experimental_bearer_token|cli_auth_credentials_store";
   if (target?.kind === "remote" && files.length) {
@@ -220,7 +231,7 @@ export function managedAiSessionFingerprintConfig(
   }
   const managed = config.managedAiConnection as Record<string, unknown> | undefined;
   if (managed?.sessionIdentity) {
-    for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY", "GROK_API_KEY", "OPENCODE_AUTH_JSON", "OPENCODE_CONFIG_CONTENT"]) {
+    for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY", "GROK_API_KEY", "OPENCODE_AUTH_JSON", "OPENCODE_CONFIG_CONTENT", "PAPERCLIP_PI_PROVIDERS"]) {
       if (env[key]) env[key] = "<managed-ai-credential>";
     }
   }
@@ -253,6 +264,7 @@ export async function prepareManagedAiRuntime(
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
     "PAPERCLIP_OPENCODE_PROVIDERS",
+    "PAPERCLIP_PI_PROVIDERS",
     "PAPERCLIP_AI_PROVIDER_URL", "PAPERCLIP_CODEX_PROVIDERS", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "GOOGLE_GEMINI_BASE_URL", "ANTHROPIC_BEDROCK_BASE_URL",
   ]) {
     if (configuredEnv[key])
@@ -262,7 +274,7 @@ export async function prepareManagedAiRuntime(
       );
   }
   const harness = aiRoutingHarness(input.adapterType, input.config.provider, input.config.acpxAgent);
-  await assertManagedAiProjectAuth(input.config, harness === "claude_local" ? "anthropic" : harness === "codex_local" ? "openai" : input.binding.provider);
+  await assertManagedAiProjectAuth(input.config, harness === "claude_local" ? "anthropic" : harness === "codex_local" ? "openai" : input.binding.provider, undefined, harness);
   const service = aiConnectionService(db);
   let selection = await service.select({
     ...input,

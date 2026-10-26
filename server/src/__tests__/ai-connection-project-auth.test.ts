@@ -86,6 +86,27 @@ it("treats a worktree's .git file as the project root", async () => {
   );
 });
 
+it("does not read another harness's project settings for a Pi run", async () => {
+  const root = await tree();
+  const repo = path.join(root, "repo");
+  await fs.mkdir(path.join(repo, ".git"), { recursive: true });
+  await writeJson(path.join(repo, ".claude", "settings.json"), PROXY_SETTINGS);
+
+  // Pi never opens `.claude/settings.json`, so a connection it can run must not
+  // be refused for one. The explicit-override guard still applies.
+  await expect(
+    assertManagedAiProjectAuth({ cwd: repo }, "anthropic", undefined, "pi_local"),
+  ).resolves.toBeUndefined();
+  await expect(
+    assertManagedAiProjectAuth(
+      { cwd: repo, args: ["--api-key=override"] },
+      "anthropic",
+      undefined,
+      "pi_local",
+    ),
+  ).rejects.toThrow("overrides");
+});
+
 it("bounds the remote scan the same way, and reports a match as incompatible", async () => {
   const execute = vi.spyOn(executionTarget, "runAdapterExecutionTargetProcess");
   const target = { kind: "remote", transport: "sandbox", remoteCwd: "/workspace/project" } as Parameters<typeof assertManagedAiProjectAuth>[2];

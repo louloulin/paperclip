@@ -24,7 +24,10 @@ export function useConnectionModels(
   const discover = openRouter && !routing?.models.length;
   // Reuse the existing public catalog and its query cache. It returns OpenCode IDs;
   // strip only that transport prefix for other harnesses (openrouter/auto is
-  // itself a valid upstream model ID).
+  // itself a valid upstream model ID). OpenCode and Pi both name models as
+  // `provider/model`, so for them the catalog ID is already the full ID —
+  // stripping it would turn `openrouter/openrouter/auto` into `openrouter/auto`,
+  // which `aiRoutingModel` then leaves alone and Pi reads as the wrong model.
   const catalog = useQuery({
     queryKey: queryKeys.agents.adapterModels(companyId ?? "none", "opencode_local", null, "openrouter"),
     queryFn: () => agentsApi.adapterModels(companyId!, "opencode_local", { provider: "openrouter" }),
@@ -35,8 +38,9 @@ export function useConnectionModels(
   const effectiveRouting: AiProviderRouting | undefined = routing ?? (openRouter
     ? { kind: "openrouter", protocol: "chat", auth: "bearer", models: [] }
     : undefined);
+  const catalogIdIsFullModelId = harness === "opencode_local" || harness === "pi_local";
   const modelOptions = discover
-    ? (catalog.data ?? []).map((m) => ({ ...m, id: harness === "opencode_local" ? m.id : m.id.replace(/^openrouter\//, "") }))
+    ? (catalog.data ?? []).map((m) => ({ ...m, id: catalogIdIsFullModelId ? m.id : m.id.replace(/^openrouter\//, "") }))
     : routing?.models ?? [];
   return effectiveRouting
     ? {

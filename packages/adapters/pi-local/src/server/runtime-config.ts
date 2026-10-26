@@ -10,6 +10,12 @@ type PreparedPiRuntimeConfig = {
   cleanup: () => Promise<void>;
 };
 
+export type PiProviderConfigFile = {
+  /** The rendered models.json content, or null when there is nothing to write. */
+  content: string | null;
+  notes: string[];
+};
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -107,15 +113,11 @@ function parseProviderConfig(
 export async function preparePiRuntimeConfig(input: {
   env: Record<string, string>;
 }): Promise<PreparedPiRuntimeConfig> {
-  const resolveEnv = (name: string): string | undefined => input.env[name] ?? process.env[name];
-  const { providers, warning } = parseProviderConfig(
-    input.env.PAPERCLIP_PI_PROVIDERS ?? process.env.PAPERCLIP_PI_PROVIDERS,
-    resolveEnv,
-  );
-  if (!providers) {
+  const { content, notes } = buildPiProviderConfig(input);
+  if (!content) {
     return {
       env: input.env,
-      notes: warning ? [warning] : [],
+      notes,
       agentConfigDir: null,
       cleanup: async () => {},
     };
@@ -123,11 +125,7 @@ export async function preparePiRuntimeConfig(input: {
 
   const agentConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-pi-agent-config-"));
   try {
-    await fs.writeFile(
-      path.join(agentConfigDir, "models.json"),
-      `${JSON.stringify({ providers }, null, 2)}\n`,
-      "utf8",
-    );
+    await fs.writeFile(path.join(agentConfigDir, "models.json"), content, "utf8");
   } catch (err) {
     // Never leak the temp dir when the write fails (e.g. disk-full): the
     // caller only receives the cleanup handle on success.
@@ -140,13 +138,34 @@ export async function preparePiRuntimeConfig(input: {
       ...input.env,
       PI_CODING_AGENT_DIR: agentConfigDir,
     },
-    notes: [
-      ...(warning ? [warning] : []),
-      `Injected ${Object.keys(providers).length} custom Pi provider(s) from PAPERCLIP_PI_PROVIDERS into a managed models.json: ${Object.keys(providers).join(", ")}.`,
-    ],
+    notes,
     agentConfigDir,
     cleanup: async () => {
       await fs.rm(agentConfigDir, { recursive: true, force: true });
     },
+  };
+}
+
+// Render the models.json body for the providers declared in
+// PAPERCLIP_PI_PROVIDERS. Shared by the local run path (which writes the file
+// into a managed temp dir) and the remote environment test (which ships the
+// same bytes into the execution environment).
+export function buildPiProviderConfig(input: {
+  env: Record<string, string>;
+}): PiProviderConfigFile {
+  const resolveEnv = (name: string): string | undefined => input.env[name] ?? process.env[name];
+  const { providers, warning } = parseProviderConfig(
+    input.env.PAPERCLIP_PI_PROVIDERS ?? process.env.PAPERCLIP_PI_PROVIDERS,
+    resolveEnv,
+  );
+  if (!providers) {
+    return { content: null, notes: warning ? [warning] : [] };
+  }
+  return {
+    content: `${JSON.stringify({ providers }, null, 2)}\n`,
+    notes: [
+      ...(warning ? [warning] : []),
+      `Injected ${Object.keys(providers).length} custom Pi provider(s) from PAPERCLIP_PI_PROVIDERS into a managed models.json: ${Object.keys(providers).join(", ")}.`,
+    ],
   };
 }

@@ -3,6 +3,8 @@ import {
   AI_VENDOR_PRESETS,
   aiConnectionCatalogSlug,
   aiProviderRoutingSchema,
+  aiRoutingHarness,
+  aiRoutingModel,
   aiVendorAuth,
   aiVendorPresetForEndpoint,
   aiVendorProvider,
@@ -228,6 +230,73 @@ describe("provider routing", () => {
     expect(chatProjection.env.PAPERCLIP_AI_PROVIDER_URL).toBe("https://api.minimax.cn/v1");
     expect(chatProjection.config.model).toBe("paperclip/MiniMax-M3");
   });
+  it("projects a vendor preset into Pi's models.json provider and prefixes its model", () => {
+    const messagesRouting = aiProviderRoutingSchema.parse({
+      kind: "openai_compatible",
+      protocol: "messages",
+      auth: "api_key",
+      baseUrl: "https://api.minimax.cn/anthropic",
+      models: [{ id: "MiniMax-M3" }],
+    });
+    expect(isAiConnectionCompatible({ provider: "anthropic", method: "api_key", routing: messagesRouting }, "pi_local")).toBe(true);
+    const projected = managedProviderRouting(messagesRouting, "pi_local", "mm-key", "MiniMax-M3");
+    // Pi has no base-URL flag: the endpoint and credential travel in the
+    // provider registry, not in the Claude/OpenCode variables.
+    expect(projected.env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(projected.env.PAPERCLIP_AI_PROVIDER_KEY).toBe("mm-key");
+    expect(JSON.parse(String(projected.env.PAPERCLIP_PI_PROVIDERS))).toEqual({
+      paperclip: {
+        baseUrl: "https://api.minimax.cn/anthropic",
+        apiKey: "mm-key",
+        api: "anthropic-messages",
+        models: [{ id: "MiniMax-M3", name: "MiniMax-M3" }],
+      },
+    });
+    expect(projected.config.model).toBe("paperclip/MiniMax-M3");
+
+    const chatRouting = aiProviderRoutingSchema.parse({
+      ...messagesRouting,
+      protocol: "chat",
+      auth: "bearer",
+      baseUrl: "https://api.minimax.cn/v1",
+    });
+    expect(isAiConnectionCompatible({ provider: "openai", method: "api_key", routing: chatRouting }, "pi_local")).toBe(true);
+    const chat = managedProviderRouting(chatRouting, "pi_local", "mm-key", "MiniMax-M3");
+    expect(JSON.parse(String(chat.env.PAPERCLIP_PI_PROVIDERS)).paperclip.api).toBe("openai-completions");
+    expect(chat.config.model).toBe("paperclip/MiniMax-M3");
+
+    // Pi has no Responses surface, so a Codex-only routing stays incompatible.
+    expect(
+      isAiConnectionCompatible(
+        { provider: "openai", method: "api_key", routing: { ...chatRouting, protocol: "responses" } },
+        "pi_local",
+      ),
+    ).toBe(false);
+  });
+
+  it("uses Pi's built-in OpenRouter provider for a native OpenRouter key", () => {
+    const routing = aiProviderRoutingSchema.parse({ kind: "openrouter", protocol: "chat", auth: "bearer", models: [] });
+    expect(isAiConnectionCompatible({ provider: "openrouter", method: "api_key", mode: "responsible_user" }, "pi_local", "openrouter/anthropic/claude-sonnet-4.6")).toBe(true);
+    const projected = managedProviderRouting(routing, "pi_local", "or-key", "anthropic/claude-sonnet-4.6");
+    expect(projected.env.OPENROUTER_API_KEY).toBe("or-key");
+    expect(projected.env.PAPERCLIP_PI_PROVIDERS).toBeUndefined();
+    expect(projected.config.model).toBe("openrouter/anthropic/claude-sonnet-4.6");
+  });
+
+  it("routes the ACPX pi agent to the Pi harness and keeps provider/model IDs stable", () => {
+    expect(aiRoutingHarness("paperclip_runner", "acpx", "pi")).toBe("pi_local");
+    const routed = aiProviderRoutingSchema.parse({
+      kind: "openai_compatible",
+      protocol: "chat",
+      auth: "bearer",
+      baseUrl: "https://gateway.example/v1",
+    });
+    expect(aiRoutingModel(routed, "pi_local", "deepseek-chat")).toBe("paperclip/deepseek-chat");
+    expect(aiRoutingModel(routed, "pi_local", "paperclip/deepseek-chat")).toBe("paperclip/deepseek-chat");
+    const openrouter = aiProviderRoutingSchema.parse({ kind: "openrouter", protocol: "chat", auth: "bearer" });
+    expect(aiRoutingModel(openrouter, "pi_local", "anthropic/claude-sonnet-4.6")).toBe("openrouter/anthropic/claude-sonnet-4.6");
+  });
+
   it("keeps vendor presets in the existing chat/messages catalog rows", () => {
     expect(aiConnectionCatalogSlug("anthropic", { kind: "openai_compatible", protocol: "messages" })).toBe("messages-api");
     expect(aiConnectionCatalogSlug("openai", { kind: "openai_compatible", protocol: "chat" })).toBe("chat-completions-api");

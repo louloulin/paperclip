@@ -113,6 +113,46 @@ Initial roster (request from `lin`, MiniMax China first):
      the harness a disposable config directory and never opens those files.
      Project-owned settings still refuse the connection.
 
+## Follow-ups (2026-10-26): Pi and more onboarding harnesses
+
+9. `pi_local` joins the managed connection surface
+   - `isAiRoutingCompatible` accepts Pi for Messages and Chat Completions
+     (never Responses/Bedrock), and `aiRoutingHarness` maps the ACPX `pi` agent
+     to it. `AI_CONNECTION_CAPABILITIES` lists `pi_local` on every native
+     `api_key` method Pi already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+     `GEMINI_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`).
+   - `managedProviderRouting` projects a routed connection into Pi's own
+     `models.json` shape (`PAPERCLIP_PI_PROVIDERS`, `api` = `anthropic-messages`
+     or `openai-completions`) under the managed `paperclip` provider, and names
+     the agent model `paperclip/<id>`. An OpenRouter connection keeps Pi's
+     built-in provider and `openrouter/<id>` IDs. Pi models are always
+     `provider/model`, so the projected model is normalized even when the saved
+     value was bare.
+   - `PAPERCLIP_PI_PROVIDERS` is stripped from inherited/configured env and
+     redacted from session identities, matching the OpenCode provider config.
+     It is also redacted by name in the invocation env written to run metadata:
+     the value embeds the provider key, and the generic key/token/secret
+     pattern never matched it. `OPENCODE_CONFIG_CONTENT` and
+     `OPENCODE_AUTH_JSON` carry credentials the same way and are redacted
+     alongside it.
+   - The project-auth guard now scans only the harness's own settings files, so
+     a Pi run is not refused for `.claude/settings.json` it never opens.
+   - The environment test materializes the same registry: locally it writes the
+     managed `models.json` into a probe-only temp dir; a remote target cannot
+     see a host temp dir, so the same bytes are shipped into the environment
+     (`PI_CODING_AGENT_DIR` inside it) and removed once the probe is done.
+     Without it the hello turn would report every configured model as missing.
+10. Onboarding offers more harnesses
+   - The recommended row is unchanged (Claude, Codex). A collapsed
+     **More harnesses** row exposes Pi, Gemini, Kimi, OpenCode, Cursor and Grok;
+     no-sign-in harnesses default to the API-key card.
+   - Pi has no default model, so its key card asks for an explicit
+     `provider/model`; the step will not advance without one. The other added
+     harnesses keep their adapter defaults.
+   - **Other providers** follows the selected harness instead of always hiring
+     Claude: Claude keeps Messages, OpenCode takes Chat Completions, and Pi takes
+     either. A harness that cannot run a preset hides the entry.
+
 ## Tests
 
 - `server/src/__tests__/ai-provider-routing.test.ts`: every preset parses as a
@@ -128,7 +168,21 @@ Initial roster (request from `lin`, MiniMax China first):
 - `server/src/__tests__/ai-connection-project-auth.test.ts`: project settings
   refuse the connection (from the project root and from a subdirectory, and in
   a worktree whose `.git` is a file), the account's home is not read as
-  project configuration, and the remote scan carries the same boundaries.
+  project configuration, and the remote scan carries the same boundaries. A
+  Pi run ignores the Claude/Codex files it never opens while still refusing
+  explicit `--api-key` overrides.
+- `server/src/__tests__/ai-provider-routing.test.ts`: a Messages vendor preset
+  projects into `PAPERCLIP_PI_PROVIDERS` with `paperclip/<id>`; a Chat preset
+  switches the Pi provider's `api`; a native OpenRouter connection keeps
+  `openrouter/` IDs; Responses and the ACPX `pi` harness mapping are asserted.
+- `ui/src/components/OnboardingWizard.test.tsx`: Pi stays off the recommended
+  row, appears behind **More harnesses**, requires a `provider/model`, and
+  hires `pi_local` through an OpenRouter account.
+- `packages/adapters/pi-local/src/server/test.test.ts`: the environment test
+  materializes `PAPERCLIP_PI_PROVIDERS` into a managed `models.json` for model
+  discovery and the hello probe (and removes the probe-only dir), and ships the
+  same registry into a remote environment, pointing the probe at it and
+  cleaning it up afterwards.
 
 ## Out of scope
 
@@ -151,10 +205,27 @@ Then a live smoke: **Connect a model → MiniMax (China)**, paste a key, save, r
 an agent on Claude; switch the same preset to **Chat Completions** and run an
 agent on OpenCode.
 
-Onboarding reaches the same presets from **Connect a model → Other providers**
-(Messages only, Claude harness). A connection saved there is proved by
-`POST /api/companies/{companyId}/adapters/claude_local/test-environment` with
-that connection's binding: `status: pass` plus `claude_hello_probe_passed`.
+Pi smoke: **Connect a model → More harnesses → Pi**, enter an OpenRouter key
+and `openrouter/<model>`, and hire; then switch the Pi agent's AI connection to
+a **MiniMax** vendor preset in agent settings (Messages) and run a task. The
+runtime config should carry `PAPERCLIP_PI_PROVIDERS` with a `paperclip`
+provider, and `adapterConfig.model` should be `paperclip/<id>`. A Chat
+Completions preset uses the same provider with `api: "openai-completions"`.
+
+Onboarding reaches the same presets from **Connect a model → Other providers**.
+With no source picked yet the sheet keeps the Claude Messages path; after a
+source is picked it follows that harness (Claude Messages, Pi either surface,
+OpenCode Chat Completions). A connection saved there is proved by
+`POST /api/companies/{companyId}/adapters/{adapterType}/test-environment` with
+that connection's binding: `status: pass` plus `ai_connection_api_key_reverified`.
+Preset endpoints are fixed vendor hosts, so both the save and the environment
+test verify the key with one cheap one-token call to the routing's own surface
+(`POST {base}/v1/messages` for Messages, `{base}/chat/completions` for Chat) —
+never a caller-supplied URL. They do not run the Claude CLI hello probe: its
+45–90s CLI boot plus model round-trip bought the same verdict, which made
+configuring a vendor preset sit on "Connect" while native API keys finished in
+seconds. Custom gateways keep the CLI probe, because the control plane never
+fetches an arbitrary destination.
 
 ### Local environment note
 
